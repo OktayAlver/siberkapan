@@ -216,4 +216,4 @@ Data from external feeds is subject to the respective source licenses:
 
 - **Platform:** [siberkapan.org](https://siberkapan.org)
 - **Contact Form:** [siberkapan.org/iletisim](https://siberkapan.org/iletisim)
-- **Developer:** [Oktay ALVER](linkedin.com/in/oktayalver)
+- **Developer:** [Oktay ALVER](https://www.linkedin.com/in/oktayalver/?lipi=urn%3Ali%3Apage%3Ad_flagship3_profile_view_base_contact_details%3B7PtqsXxcQ62UbG%2BVJgWgCg%3D%3D)
