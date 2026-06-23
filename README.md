@@ -18,6 +18,8 @@ SiberKapan is a community-driven threat intelligence platform focused on cyber t
 ## Features
 
 - **FortiGate Automation Stitch Integration** — Real-time attacker IP submission via webhook
+- **HoneypotKapan** — Open-source honeypot emulating 10 services (SSH, RDP, FTP, Telnet, SMB, MySQL, MSSQL, VNC, HTTP, SIP); one-command install
+- **Nginx Watcher** — Zero-dependency Python agent detecting 404/auth/rate floods and exploit signatures from nginx access logs; one-command install
 - **Community Blocklists** — TXT, JSON, CIDR, FortiGate CLI, iptables formats
 - **CVE Feed** — 1,600+ CISA KEV records with vendor-filtered RSS (Fortinet, Microsoft, Cisco, VMware...)
 - **BGP / IP Lookup** — ASN, GeoIP, threat score, source attribution
@@ -91,6 +93,16 @@ Header: Content-Type: application/json
 Contact via [siberkapan.org/iletisim](https://siberkapan.org/iletisim)
 
 ---
+## Quick Start — Honeypot & Nginx Watcher
+
+Two lightweight, open-source agents that feed attacker IPs directly into SiberKapan:
+
+| Agent | What It Detects | Install |
+|-------|-----------------|---------|
+| [HoneypotKapan](honeypot/) | SSH, RDP, FTP, Telnet, SMB, MySQL, MSSQL, VNC, HTTP, SIP — credential capture | `wget https://siberkapan.org/honeypot/install.py && sudo python3 install.py` |
+| [Nginx Watcher](nginx-watcher/) | 404/auth/rate flood, exploit path signatures, scanner User-Agents | `curl -fsSL https://siberkapan.org/nginx-watcher/install.sh \| sudo bash -s -- --key=YOUR_KEY` |
+
+Both require a SiberKapan API key ([request one here](https://siberkapan.org/iletisim)) and run as systemd services with zero external dependencies. See each agent's README for full configuration options.
 
 ## API Reference
 
