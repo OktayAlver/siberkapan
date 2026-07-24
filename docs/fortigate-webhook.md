@@ -92,19 +92,6 @@ A successful submission returns:
 **Monitor submissions:**  
 View your device's contributions at [siberkapan.org/fortigate-feed](https://siberkapan.org/fortigate-feed)
 
----
-
-## Internal Network Access
-
-If your FortiGate cannot reach external URLs directly, you can use the server's IP address:
-
-```
-URL: https://104.247.186.100/feed/fortigate
-Port: 443
-Verify Remote Host: OFF
-```
-
----
 
 ## Scoring
 
