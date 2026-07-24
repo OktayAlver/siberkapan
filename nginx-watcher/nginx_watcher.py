@@ -15,6 +15,7 @@ Config dosyasi yoksa varsayilan degerlerle + ortam degiskenleriyle calismayi den
 """
 
 import argparse
+import copy
 import json
 import os
 import re
@@ -103,7 +104,7 @@ log = logging.getLogger("nginx_watcher")
 # â”€â”€ CONFIG YUKLEME â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def load_config(path):
-    cfg = json.loads(json.dumps(DEFAULT_CONFIG))  # deep copy
+    cfg = copy.deepcopy(DEFAULT_CONFIG)
 
     if path and os.path.isfile(path):
         try:
@@ -230,12 +231,13 @@ class PatternEngine:
     def _mark_sent(self, ip, pattern_type, now):
         self.cooldowns[(ip, pattern_type)] = now
 
-    def _check_window(self, ip, pattern_type, now, window_s, count_threshold):
+    def _window_count(self, ip, pattern_type, now, window_s):
+        """Yeni olayi pencereye ekler, penceredeki guncel olay sayisini doner."""
         dq = self.windows[ip][pattern_type]
         dq.append(now)
         while dq and (now - dq[0]) > window_s:
             dq.popleft()
-        return len(dq) >= count_threshold
+        return len(dq)
 
     def process(self, parsed, now):
         """
@@ -258,32 +260,35 @@ class PatternEngine:
         # 404 flood
         cfg = self.thresholds.get("404_flood", {})
         if cfg.get("enabled") and status == 404:
-            if self._check_window(ip, "404_flood", now, cfg.get("window_s", 60), cfg.get("count", 10)):
-                if not self._on_cooldown(ip, "404_flood", now):
-                    events.append(("404_flood", {
-                        "status": status, "path": path,
-                        "hit_count": cfg.get("count", 10), "window_s": cfg.get("window_s", 60)
-                    }))
+            window_s = cfg.get("window_s", 60)
+            count = self._window_count(ip, "404_flood", now, window_s)
+            if count >= cfg.get("count", 10) and not self._on_cooldown(ip, "404_flood", now):
+                events.append(("404_flood", {
+                    "status": status, "path": path,
+                    "hit_count": count, "window_s": window_s
+                }))
 
         # auth flood (401/403)
         cfg = self.thresholds.get("auth_flood", {})
         if cfg.get("enabled") and status in (401, 403):
-            if self._check_window(ip, "auth_flood", now, cfg.get("window_s", 60), cfg.get("count", 8)):
-                if not self._on_cooldown(ip, "auth_flood", now):
-                    events.append(("auth_flood", {
-                        "status": status, "path": path,
-                        "hit_count": cfg.get("count", 8), "window_s": cfg.get("window_s", 60)
-                    }))
+            window_s = cfg.get("window_s", 60)
+            count = self._window_count(ip, "auth_flood", now, window_s)
+            if count >= cfg.get("count", 8) and not self._on_cooldown(ip, "auth_flood", now):
+                events.append(("auth_flood", {
+                    "status": status, "path": path,
+                    "hit_count": count, "window_s": window_s
+                }))
 
         # rate flood (genel istek hizi, status'tan bagimsiz)
         cfg = self.thresholds.get("rate_flood", {})
         if cfg.get("enabled"):
-            if self._check_window(ip, "rate_flood", now, cfg.get("window_s", 10), cfg.get("count", 30)):
-                if not self._on_cooldown(ip, "rate_flood", now):
-                    events.append(("rate_flood", {
-                        "status": status, "path": path,
-                        "hit_count": cfg.get("count", 30), "window_s": cfg.get("window_s", 10)
-                    }))
+            window_s = cfg.get("window_s", 10)
+            count = self._window_count(ip, "rate_flood", now, window_s)
+            if count >= cfg.get("count", 30) and not self._on_cooldown(ip, "rate_flood", now):
+                events.append(("rate_flood", {
+                    "status": status, "path": path,
+                    "hit_count": count, "window_s": window_s
+                }))
 
         # path signature (anlik, count gerekmez)
         cfg = self.thresholds.get("path_signature", {})
