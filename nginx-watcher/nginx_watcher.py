@@ -515,6 +515,7 @@ def send_to_siberkapan(api_url, api_key, ip, pattern_type, detail, timeout=8):
         headers={
             "Content-Type": "application/json",
             "X-SiberKapan-Key": api_key,
+            "User-Agent": "siberkapan-nginx-watcher/2.0 (+https://siberkapan.org)",
         },
     )
     try:
