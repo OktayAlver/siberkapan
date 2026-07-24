@@ -12,6 +12,11 @@ Calistirma:
 
 Config dosyasi yoksa varsayilan degerlerle + ortam degiskenleriyle calismayi dener:
     SIBERKAPAN_API_KEY, SIBERKAPAN_LOG_PATH, SIBERKAPAN_API_URL
+
+Imza listeleri (path_signatures / ua_signatures) artik koda gomulu degil.
+Watcher, gunde bir kez (varsayilan) config'teki patterns.url adresinden
+guncel listeyi ceker, diskte cache'ler ve basarisiz olursa son bilinen
+(cache ya da builtin) listeyle calismaya devam eder. Bkz. PatternStore.
 """
 
 import argparse
@@ -25,10 +30,10 @@ import logging
 import collections
 import urllib.request
 import urllib.error
+import urllib.parse
 from datetime import datetime, timezone
 
-# â”€â”€ VARSAYILAN AYARLAR â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-
+# ── VARSAYILAN AYARLAR ──────────────────────────────────────────────
 DEFAULT_CONFIG = {
     "api_key": "",
     "api_url": "https://siberkapan.org/feed/nginx",
@@ -40,54 +45,45 @@ DEFAULT_CONFIG = {
         "auth_flood": {"enabled": True, "count": 8, "window_s": 60},
         "rate_flood": {"enabled": True, "count": 30, "window_s": 10},
         "path_signature": {"enabled": True},
-        "ua_signature": {"enabled": True, "flag_empty_ua": False}
+        "ua_signature": {"enabled": True, "flag_empty_ua": False},
+        "malformed_request": {"enabled": True, "count": 5, "window_s": 60},
+        "distributed_signature": {"enabled": True, "distinct_ips": 5, "window_s": 300},
     },
     "ignore_ips": [],
     "ignore_path_prefixes": [],
-    "log_file": "/var/log/siberkapan-nginx-watcher.log"
+    "log_file": "/var/log/siberkapan-nginx-watcher.log",
+    "trust_x_forwarded_for": False,
+    "patterns": {
+        "url": "https://siberkapan.org/patterns/nginx-watcher.json",
+        "cache_path": "/etc/siberkapan-nginx-watcher/patterns_cache.json",
+        "update_interval_s": 86400,
+        "fetch_timeout_s": 10,
+    },
 }
 
-# Bilinen exploit/scanner path imzalari (regex, case-insensitive)
-PATH_SIGNATURES = [
-    r"/wp-login\.php",
-    r"/wp-admin/",
-    r"/\.env",
-    r"/\.git/config",
-    r"/admin/?$",
-    r"/phpmyadmin",
-    r"\.\./",
-    r"%2e%2e%2f",
-    r"union\s+select",
-    r"<script",
-    r"/xmlrpc\.php",
-    r"/\.aws/credentials",
-    r"/vendor/phpunit",
-    r"/etc/passwd",
-    r"/\.ssh/",
-    r"cmd=",
-    r"/console/",
-    r"/actuator/",
+BUILTIN_PATH_SIGNATURES = [
+    r"/wp-login\.php", r"/wp-admin", r"/\.env", r"/\.git/config", r"/\.git/HEAD",
+    r"/admin(?:[/?]|$)", r"/phpmyadmin", r"/\.aws/credentials", r"/\.ssh/",
+    r"/\.docker", r"/vendor/phpunit", r"/etc/passwd", r"/xmlrpc\.php",
+    r"/server-status", r"/elmah\.axd", r"/actuator", r"/console/",
+    r"/\.htpasswd", r"/config\.php\.bak", r"/backup\.(zip|tar|sql|tar\.gz)",
+    r"/\.idea/", r"/\.vscode/",
+    r"\.\./", r"\.\.\\", r"%2e%2e%2f", r"%252e%252e%252f", r"%c0%ae%c0%ae",
+    r"php://(filter|input)", r"data://", r"expect://",
+    r"union\s+select", r"insert\s+into\s+\w+", r"sleep\(\d", r"waitfor\s+delay",
+    r"\bor\s+1=1\b", r"benchmark\(",
+    r"<script", r"onerror\s*=", r"javascript:",
+    r";\s*(cat|whoami|id|ls|wget|curl)\b", r"\$\(.+\)",
+    r"\$\{jndi:", r"[?&](cmd|exec|execute)=",
+    r"/(shell|c99|r57|wso|b374k)\.(php|jsp|asp|aspx)",
 ]
 
-# Bilinen tarama araci User-Agent imzalari (case-insensitive)
-# NOT: bos/eksik UA buraya dahil edilmiyor cunku cok yaygin meÅŸru kullanim var
-# (curl/webhook/API client'lar). Bos UA tespiti ayri bir flag ile yonetiliyor
-# (thresholds.ua_signature.flag_empty_ua), varsayilan kapali.
-UA_SIGNATURES = [
-    r"sqlmap",
-    r"nikto",
-    r"nmap",
-    r"masscan",
-    r"nuclei",
-    r"gobuster",
-    r"dirbuster",
-    r"acunetix",
-    r"netsparker",
-    r"zgrab",
+BUILTIN_UA_SIGNATURES = [
+    r"sqlmap", r"nikto", r"nmap", r"masscan", r"nuclei", r"gobuster",
+    r"dirbuster", r"acunetix", r"netsparker", r"zgrab", r"whatweb",
+    r"wpscan", r"havij",
 ]
 
-# Nginx 'combined' log format:
-# $remote_addr - $remote_user [$time_local] "$request" $status $body_bytes_sent "$http_referer" "$http_user_agent"
 LOG_LINE_RE = re.compile(
     r'^(?P<ip>\S+) \S+ \S+ \[(?P<time>[^\]]+)\] '
     r'"(?P<method>\S+) (?P<path>\S+)(?: \S+)?" '
@@ -95,39 +91,149 @@ LOG_LINE_RE = re.compile(
     r'"(?P<referer>[^"]*)" "(?P<ua>[^"]*)"'
 )
 
-PATH_SIG_RE = re.compile("|".join(PATH_SIGNATURES), re.IGNORECASE)
-UA_SIG_RE = re.compile("|".join(UA_SIGNATURES), re.IGNORECASE)
+EXTENDED_LOG_LINE_RE = re.compile(
+    r'^(?P<ip>\S+) \S+ \S+ \[(?P<time>[^\]]+)\] '
+    r'"(?P<method>\S+) (?P<path>\S+)(?: \S+)?" '
+    r'(?P<status>\d+) (?P<bytes>\S+) '
+    r'"(?P<referer>[^"]*)" "(?P<ua>[^"]*)" "(?P<xff>[^"]*)"'
+)
+
+LOOSE_IP_RE = re.compile(r'^(?P<ip>\S+)\s')
 
 log = logging.getLogger("nginx_watcher")
 
 
-# â”€â”€ CONFIG YUKLEME â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+def _safe_unquote(s, rounds=1):
+    out = s
+    seen = {out}
+    for _ in range(rounds):
+        try:
+            nxt = urllib.parse.unquote(out, errors="replace")
+        except Exception:
+            break
+        if nxt == out or nxt in seen:
+            break
+        out = nxt
+        seen.add(out)
+    return out
+
+
+class PatternStore:
+    def __init__(self, cfg):
+        self.url = cfg.get("url")
+        self.cache_path = cfg.get("cache_path")
+        self.update_interval_s = cfg.get("update_interval_s", 86400)
+        self.fetch_timeout_s = cfg.get("fetch_timeout_s", 10)
+        self.version = None
+        self._last_check = 0.0
+        self.path_signatures = list(BUILTIN_PATH_SIGNATURES)
+        self.ua_signatures = list(BUILTIN_UA_SIGNATURES)
+        self.path_re = None
+        self.ua_re = None
+        self._load_initial()
+        self._compile()
+
+    def _compile(self):
+        try:
+            self.path_re = re.compile("|".join(self.path_signatures), re.IGNORECASE)
+        except re.error as e:
+            log.error(f"[patterns] path signature listesi derlenemedi ({e}), builtin'e donuluyor")
+            self.path_signatures = list(BUILTIN_PATH_SIGNATURES)
+            self.path_re = re.compile("|".join(self.path_signatures), re.IGNORECASE)
+        try:
+            self.ua_re = re.compile("|".join(self.ua_signatures), re.IGNORECASE)
+        except re.error as e:
+            log.error(f"[patterns] UA signature listesi derlenemedi ({e}), builtin'e donuluyor")
+            self.ua_signatures = list(BUILTIN_UA_SIGNATURES)
+            self.ua_re = re.compile("|".join(self.ua_signatures), re.IGNORECASE)
+
+    def _load_initial(self):
+        if self.cache_path and os.path.isfile(self.cache_path):
+            try:
+                with open(self.cache_path, "r") as f:
+                    data = json.load(f)
+                self._apply(data, source="cache")
+            except Exception as e:
+                log.warning(f"[patterns] cache okunamadi ({self.cache_path}): {e}, builtin ile baslaniyor")
+
+    def _apply(self, data, source):
+        ps = data.get("path_signatures")
+        us = data.get("ua_signatures")
+        if isinstance(ps, list) and ps:
+            self.path_signatures = ps
+        if isinstance(us, list) and us:
+            self.ua_signatures = us
+        self.version = data.get("version")
+        log.info(
+            f"[patterns] {source} yuklendi (version={self.version}, "
+            f"path_sig={len(self.path_signatures)}, ua_sig={len(self.ua_signatures)})"
+        )
+
+    def maybe_update(self, now):
+        if not self.url:
+            return
+        if (now - self._last_check) < self.update_interval_s:
+            return
+        self._last_check = now
+        try:
+            req = urllib.request.Request(self.url, headers={"User-Agent": "siberkapan-nginx-watcher"})
+            with urllib.request.urlopen(req, timeout=self.fetch_timeout_s) as resp:
+                raw = resp.read().decode("utf-8", errors="replace")
+            data = json.loads(raw)
+            if not isinstance(data, dict) or "path_signatures" not in data:
+                raise ValueError("beklenmeyen format (path_signatures alani yok)")
+            if data.get("version") is not None and data.get("version") == self.version:
+                log.info(f"[patterns] guncel (version={self.version}), degisiklik yok")
+                return
+            self._apply(data, source="remote")
+            self._compile()
+            self._save_cache(data)
+        except Exception as e:
+            log.warning(f"[patterns] uzak liste cekilemedi ({self.url}): {e} — mevcut liste ile devam ediliyor")
+
+    def _save_cache(self, data):
+        if not self.cache_path:
+            return
+        try:
+            d = os.path.dirname(self.cache_path)
+            if d:
+                os.makedirs(d, exist_ok=True)
+            tmp = self.cache_path + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            os.replace(tmp, self.cache_path)
+        except Exception as e:
+            log.warning(f"[patterns] cache yazilamadi ({self.cache_path}): {e}")
+
+
+def _deep_merge_defaults(cfg, user_cfg):
+    for k, v in user_cfg.items():
+        if k in ("thresholds", "patterns") and isinstance(v, dict) and isinstance(cfg.get(k), dict):
+            for kk, vv in v.items():
+                if isinstance(vv, dict) and isinstance(cfg[k].get(kk), dict):
+                    cfg[k][kk].update(vv)
+                else:
+                    cfg[k][kk] = vv
+        else:
+            cfg[k] = v
+
 
 def load_config(path):
     cfg = copy.deepcopy(DEFAULT_CONFIG)
-
     if path and os.path.isfile(path):
         try:
             with open(path, "r") as f:
                 user_cfg = json.load(f)
-            cfg.update({k: v for k, v in user_cfg.items() if k != "thresholds"})
-            if "thresholds" in user_cfg:
-                for k, v in user_cfg["thresholds"].items():
-                    if k in cfg["thresholds"]:
-                        cfg["thresholds"][k].update(v)
-                    else:
-                        cfg["thresholds"][k] = v
+            _deep_merge_defaults(cfg, user_cfg)
         except Exception as e:
             print(f"[config] UYARI: {path} okunamadi ({e}), varsayilan + env kullaniliyor")
 
-    # Ortam degiskenleri config dosyasini ezer (varsa)
     if os.environ.get("SIBERKAPAN_API_KEY"):
         cfg["api_key"] = os.environ["SIBERKAPAN_API_KEY"]
     if os.environ.get("SIBERKAPAN_LOG_PATH"):
         cfg["log_path"] = os.environ["SIBERKAPAN_LOG_PATH"]
     if os.environ.get("SIBERKAPAN_API_URL"):
         cfg["api_url"] = os.environ["SIBERKAPAN_API_URL"]
-
     return cfg
 
 
@@ -135,7 +241,6 @@ def setup_logging(cfg, verbose):
     level = logging.DEBUG if verbose else logging.INFO
     log.setLevel(level)
     fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
-
     sh = logging.StreamHandler(sys.stdout)
     sh.setFormatter(fmt)
     log.addHandler(sh)
@@ -150,14 +255,7 @@ def setup_logging(cfg, verbose):
             log.warning(f"Dosyaya loglama acilamadi ({log_file}): {e}")
 
 
-# â”€â”€ LOG TAILER (polling tabanli, rotate-aware) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-
 class LogTailer:
-    """
-    Bir log dosyasini periyodik olarak yeni satirlar icin okur.
-    Logrotate sonrasi dosya boyutu kuculurse (ya da inode degisirse) basa sarar.
-    """
-
     def __init__(self, path):
         self.path = path
         self._fh = None
@@ -202,31 +300,61 @@ class LogTailer:
         self._reopen_if_rotated()
         if self._fh is None:
             self._open_at_end()
-            if self._fh is None:
-                return []
-        lines = self._fh.readlines()
-        return lines
+        if self._fh is None:
+            return []
+        return self._fh.readlines()
 
 
-# â”€â”€ PATTERN MOTORU â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+def parse_line(line, extended=False):
+    rex = EXTENDED_LOG_LINE_RE if extended else LOG_LINE_RE
+    m = rex.match(line)
+    if m:
+        try:
+            status = int(m.group("status"))
+        except (ValueError, TypeError):
+            status = None
+        if status is not None:
+            ip = m.group("ip")
+            if extended:
+                xff = m.group("xff")
+                if xff and xff != "-":
+                    ip = xff.split(",")[0].strip() or ip
+            return {
+                "ip": ip,
+                "method": m.group("method"),
+                "path": m.group("path"),
+                "status": status,
+                "ua": m.group("ua"),
+                "malformed": False,
+            }
+    m2 = LOOSE_IP_RE.match(line)
+    if m2:
+        return {
+            "ip": m2.group("ip"),
+            "method": None,
+            "path": None,
+            "status": None,
+            "ua": None,
+            "malformed": True,
+        }
+    return None
+
 
 class PatternEngine:
-    def __init__(self, thresholds, cooldown_s, ignore_ips, ignore_path_prefixes=None):
+    def __init__(self, thresholds, cooldown_s, ignore_ips, patterns, ignore_path_prefixes=None):
         self.thresholds = thresholds
         self.cooldown_s = cooldown_s
         self.ignore_ips = set(ignore_ips or [])
         self.ignore_path_prefixes = tuple(ignore_path_prefixes or [])
-        # ip -> pattern_type -> deque[timestamp]
+        self.patterns = patterns
         self.windows = collections.defaultdict(lambda: collections.defaultdict(collections.deque))
-        # (ip, pattern_type) -> last_sent_epoch
         self.cooldowns = {}
+        self.global_windows = collections.defaultdict(collections.deque)
+        self.global_cooldowns = {}
 
     def _on_cooldown(self, ip, pattern_type, now):
-        key = (ip, pattern_type)
-        last = self.cooldowns.get(key)
-        if last is not None and (now - last) < self.cooldown_s:
-            return True
-        return False
+        last = self.cooldowns.get((ip, pattern_type))
+        return last is not None and (now - last) < self.cooldown_s
 
     def _mark_sent(self, ip, pattern_type, now):
         self.cooldowns[(ip, pattern_type)] = now
@@ -239,14 +367,50 @@ class PatternEngine:
             dq.popleft()
         return len(dq)
 
+    def _note_global(self, sig_name, ip, now, window_s):
+        dq = self.global_windows[sig_name]
+        dq.append((now, ip))
+        while dq and (now - dq[0][0]) > window_s:
+            dq.popleft()
+
+    def _maybe_emit_distributed(self, sig_name, now, events):
+        cfg = self.thresholds.get("distributed_signature", {})
+        if not cfg.get("enabled", True):
+            return
+        dq = self.global_windows[sig_name]
+        distinct_ips = {ip for _, ip in dq}
+        if len(distinct_ips) < cfg.get("distinct_ips", 5):
+            return
+        key = f"distributed_{sig_name}"
+        last = self.global_cooldowns.get(key)
+        if last is not None and (now - last) < self.cooldown_s:
+            return
+        self.global_cooldowns[key] = now
+        events.append(("distributed_signature", {
+            "signature": sig_name,
+            "distinct_ip_count": len(distinct_ips),
+            "window_s": cfg.get("window_s", 300),
+            "sample_ips": sorted(distinct_ips)[:20],
+        }))
+
     def process(self, parsed, now):
-        """
-        parsed: dict with ip, status, path, ua (zaten LOG_LINE_RE'den cikarilmis)
-        Donus: list of (pattern_type, detail_dict) -- bir satir birden fazla pattern tetikleyebilir
-        """
         ip = parsed["ip"]
         if ip in self.ignore_ips:
             return []
+
+        events = []
+
+        if parsed.get("malformed"):
+            cfg = self.thresholds.get("malformed_request", {})
+            if cfg.get("enabled", True):
+                window_s = cfg.get("window_s", 60)
+                count = self._window_count(ip, "malformed_request", now, window_s)
+                if count >= cfg.get("count", 5) and not self._on_cooldown(ip, "malformed_request", now):
+                    events.append(("malformed_request", {
+                        "hit_count": count, "window_s": window_s
+                    }))
+                    self._mark_sent(ip, "malformed_request", now)
+            return events
 
         status = parsed["status"]
         path = parsed["path"]
@@ -255,9 +419,6 @@ class PatternEngine:
         if path and self.ignore_path_prefixes and path.startswith(self.ignore_path_prefixes):
             return []
 
-        events = []
-
-        # 404 flood
         cfg = self.thresholds.get("404_flood", {})
         if cfg.get("enabled") and status == 404:
             window_s = cfg.get("window_s", 60)
@@ -267,8 +428,8 @@ class PatternEngine:
                     "status": status, "path": path,
                     "hit_count": count, "window_s": window_s
                 }))
+                self._mark_sent(ip, "404_flood", now)
 
-        # auth flood (401/403)
         cfg = self.thresholds.get("auth_flood", {})
         if cfg.get("enabled") and status in (401, 403):
             window_s = cfg.get("window_s", 60)
@@ -278,8 +439,8 @@ class PatternEngine:
                     "status": status, "path": path,
                     "hit_count": count, "window_s": window_s
                 }))
+                self._mark_sent(ip, "auth_flood", now)
 
-        # rate flood (genel istek hizi, status'tan bagimsiz)
         cfg = self.thresholds.get("rate_flood", {})
         if cfg.get("enabled"):
             window_s = cfg.get("window_s", 10)
@@ -289,33 +450,37 @@ class PatternEngine:
                     "status": status, "path": path,
                     "hit_count": count, "window_s": window_s
                 }))
+                self._mark_sent(ip, "rate_flood", now)
 
-        # path signature (anlik, count gerekmez)
         cfg = self.thresholds.get("path_signature", {})
-        if cfg.get("enabled") and PATH_SIG_RE.search(path or ""):
-            if not self._on_cooldown(ip, "path_signature", now):
-                events.append(("path_signature", {
-                    "status": status, "path": path, "hit_count": 1
-                }))
+        if cfg.get("enabled") and path:
+            once = _safe_unquote(path, rounds=1)
+            twice = _safe_unquote(path, rounds=2)
+            candidates = {path, once, twice}
+            if any(self.patterns.path_re.search(c) for c in candidates):
+                dcfg = self.thresholds.get("distributed_signature", {})
+                self._note_global("path_signature", ip, now, dcfg.get("window_s", 300))
+                if not self._on_cooldown(ip, "path_signature", now):
+                    events.append(("path_signature", {"status": status, "path": path, "hit_count": 1}))
+                    self._mark_sent(ip, "path_signature", now)
+                self._maybe_emit_distributed("path_signature", now, events)
 
-        # user-agent signature (anlik)
         cfg = self.thresholds.get("ua_signature", {})
         if cfg.get("enabled"):
             ua_is_empty = (not ua) or ua == "-"
-            is_known_tool = bool(UA_SIG_RE.search(ua or ""))
+            is_known_tool = bool(self.patterns.ua_re.search(ua or ""))
             should_flag = is_known_tool or (ua_is_empty and cfg.get("flag_empty_ua", False))
-            if should_flag and not self._on_cooldown(ip, "ua_signature", now):
-                events.append(("ua_signature", {
-                    "status": status, "path": path, "user_agent": ua, "hit_count": 1
-                }))
-
-        for pattern_type, _ in events:
-            self._mark_sent(ip, pattern_type, now)
+            if should_flag:
+                dcfg = self.thresholds.get("distributed_signature", {})
+                self._note_global("ua_signature", ip, now, dcfg.get("window_s", 300))
+                if not self._on_cooldown(ip, "ua_signature", now):
+                    events.append(("ua_signature", {"status": status, "path": path, "user_agent": ua, "hit_count": 1}))
+                    self._mark_sent(ip, "ua_signature", now)
+                self._maybe_emit_distributed("ua_signature", now, events)
 
         return events
 
     def cleanup_old(self, now, max_age_s=3600):
-        """Bellek sismesini onlemek icin eski windows/cooldown girdilerini temizler."""
         stale_ips = []
         for ip, pmap in self.windows.items():
             all_old = True
@@ -332,27 +497,10 @@ class PatternEngine:
         for k in stale_keys:
             del self.cooldowns[k]
 
+        stale_gkeys = [k for k, t in self.global_cooldowns.items() if (now - t) > max(max_age_s, self.cooldown_s)]
+        for k in stale_gkeys:
+            del self.global_cooldowns[k]
 
-# â”€â”€ PARSE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-
-def parse_line(line):
-    m = LOG_LINE_RE.match(line)
-    if not m:
-        return None
-    try:
-        status = int(m.group("status"))
-    except (ValueError, TypeError):
-        return None
-    return {
-        "ip": m.group("ip"),
-        "method": m.group("method"),
-        "path": m.group("path"),
-        "status": status,
-        "ua": m.group("ua"),
-    }
-
-
-# â”€â”€ SIBERKAPAN'A GONDERIM â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def send_to_siberkapan(api_url, api_key, ip, pattern_type, detail, timeout=8):
     payload = json.dumps({
@@ -360,7 +508,6 @@ def send_to_siberkapan(api_url, api_key, ip, pattern_type, detail, timeout=8):
         "pattern_type": pattern_type,
         "detail": detail,
     }).encode("utf-8")
-
     req = urllib.request.Request(
         api_url,
         data=payload,
@@ -380,18 +527,10 @@ def send_to_siberkapan(api_url, api_key, ip, pattern_type, detail, timeout=8):
     except urllib.error.URLError as e:
         return None, str(e)
     except (TimeoutError, OSError) as e:
-        # Bazi Python surumlerinde SSL/socket read timeout'u URLError'a
-        # sarilmadan dogrudan TimeoutError/OSError olarak gelebiliyor.
-        # Bu durumda watcher'i cokertmemek icin burada da yakaliyoruz.
         return None, f"timeout_or_os_error: {e}"
     except Exception as e:
-        # Son guvenlik agi: hicbir network hatasi watcher'in ana dongusunu
-        # cokertmemeli, tek bir gonderim basarisiz olsa da watcher calismaya
-        # devam etmeli.
         return None, f"unexpected_error: {e}"
 
-
-# â”€â”€ ANA DONGU â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def run(cfg, verbose=False):
     setup_logging(cfg, verbose)
@@ -403,39 +542,46 @@ def run(cfg, verbose=False):
     if not os.path.isfile(cfg["log_path"]):
         log.warning(f"Log dosyasi henuz yok: {cfg['log_path']} - bekleniyor...")
 
+    extended = bool(cfg.get("trust_x_forwarded_for"))
+    if extended:
+        log.info("trust_x_forwarded_for=true — nginx log_format'in sonuna \"$http_x_forwarded_for\" eklenmis olmali")
+
     log.info(f"SiberKapan Nginx Watcher baslatildi. log={cfg['log_path']} api={cfg['api_url']}")
 
+    patterns = PatternStore(cfg.get("patterns", {}))
     tailer = LogTailer(cfg["log_path"])
     engine = PatternEngine(
         cfg["thresholds"], cfg["cooldown_s"], cfg.get("ignore_ips"),
-        cfg.get("ignore_path_prefixes")
+        patterns, cfg.get("ignore_path_prefixes")
     )
 
     last_cleanup = time.time()
 
     while True:
         now = time.time()
-        lines = tailer.read_new_lines()
 
+        patterns.maybe_update(now)
+
+        lines = tailer.read_new_lines()
         for raw_line in lines:
-            parsed = parse_line(raw_line.rstrip("\n"))
+            parsed = parse_line(raw_line.rstrip("\n"), extended=extended)
             if not parsed:
                 continue
 
             events = engine.process(parsed, now)
             for pattern_type, detail in events:
+                send_ip = parsed["ip"]
+                if pattern_type == "distributed_signature":
+                    send_ip = "distributed"
                 try:
-                    status, body = send_to_siberkapan(
-                        cfg["api_url"], cfg["api_key"], parsed["ip"], pattern_type, detail
-                    )
+                    status, body = send_to_siberkapan(cfg["api_url"], cfg["api_key"], send_ip, pattern_type, detail)
                 except Exception as e:
-                    log.error(f"BEKLENMEYEN HATA gonderim sirasinda ip={parsed['ip']} pattern={pattern_type}: {e}")
+                    log.error(f"BEKLENMEYEN HATA gonderim sirasinda ip={send_ip} pattern={pattern_type}: {e}")
                     continue
-
                 if status == 200:
-                    log.info(f"GONDERILDI ip={parsed['ip']} pattern={pattern_type} -> {body}")
+                    log.info(f"GONDERILDI ip={send_ip} pattern={pattern_type} -> {body}")
                 else:
-                    log.warning(f"GONDERIM HATASI ip={parsed['ip']} pattern={pattern_type} status={status} body={body}")
+                    log.warning(f"GONDERIM HATASI ip={send_ip} pattern={pattern_type} status={status} body={body}")
 
         if (now - last_cleanup) > 300:
             engine.cleanup_old(now)
@@ -452,7 +598,6 @@ def main():
     args = parser.parse_args()
 
     cfg = load_config(args.config)
-
     try:
         run(cfg, verbose=args.verbose)
     except KeyboardInterrupt:
