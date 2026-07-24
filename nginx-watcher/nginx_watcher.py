@@ -21,6 +21,7 @@ guncel listeyi ceker, diskte cache'ler ve basarisiz olursa son bilinen
 
 import argparse
 import copy
+import glob
 import json
 import os
 import re
@@ -38,6 +39,14 @@ DEFAULT_CONFIG = {
     "api_key": "",
     "api_url": "https://siberkapan.org/feed/nginx",
     "log_path": "/var/log/nginx/access.log",
+    # YENI: birden fazla site/vhost log dosyasini ayni anda izlemek icin.
+    # log_paths: acik liste. log_path_glob: CloudPanel/Plesk gibi panellerde
+    # her sitenin kendi log dosyasi oldugunda otomatik kesif icin glob pattern
+    # (ornek: "/home/*/logs/nginx/access.log"). Yeni site eklendiginde config'e
+    # dokunmaya gerek kalmadan discover_interval_s surede otomatik eklenir.
+    "log_paths": [],
+    "log_path_glob": None,
+    "log_discover_interval_s": 300,
     "poll_interval_s": 1.0,
     "cooldown_s": 1800,
     "thresholds": {
@@ -46,13 +55,20 @@ DEFAULT_CONFIG = {
         "rate_flood": {"enabled": True, "count": 30, "window_s": 10},
         "path_signature": {"enabled": True},
         "ua_signature": {"enabled": True, "flag_empty_ua": False},
+        # YENI: bozuk/parse edilemeyen satirlar da artik sessizce atilmiyor
         "malformed_request": {"enabled": True, "count": 5, "window_s": 60},
+        # YENI: ayni imzayi tetikleyen farkli IP sayisi bir esigi asarsa
+        # (dagitik / low-and-slow tarama) ayri bir olay olarak bildirilir
         "distributed_signature": {"enabled": True, "distinct_ips": 5, "window_s": 300},
     },
     "ignore_ips": [],
     "ignore_path_prefixes": [],
     "log_file": "/var/log/siberkapan-nginx-watcher.log",
+    # YENI: reverse proxy/CDN arkasindaysa gercek istemci IP'sini
+    # X-Forwarded-For'dan almak icin. nginx log_format'a
+    # '"$http_x_forwarded_for"' alani EKLENMIS OLMALI (asagida ornek var).
     "trust_x_forwarded_for": False,
+    # YENI: uzaktan guncellenen imza listesi ayarlari
     "patterns": {
         "url": "https://siberkapan.org/patterns/nginx-watcher.json",
         "cache_path": "/etc/siberkapan-nginx-watcher/patterns_cache.json",
@@ -61,20 +77,26 @@ DEFAULT_CONFIG = {
     },
 }
 
+# Koda gomulu FALLBACK imzalar (uzak liste hic cekilemezse ve cache de
+# yoksa kullanilir). Guncel/genis liste artik patterns.url'de tutulur.
 BUILTIN_PATH_SIGNATURES = [
+    # -- recon / hassas dosyalar --
     r"/wp-login\.php", r"/wp-admin", r"/\.env", r"/\.git/config", r"/\.git/HEAD",
     r"/admin(?:[/?]|$)", r"/phpmyadmin", r"/\.aws/credentials", r"/\.ssh/",
     r"/\.docker", r"/vendor/phpunit", r"/etc/passwd", r"/xmlrpc\.php",
     r"/server-status", r"/elmah\.axd", r"/actuator", r"/console/",
     r"/\.htpasswd", r"/config\.php\.bak", r"/backup\.(zip|tar|sql|tar\.gz)",
     r"/\.idea/", r"/\.vscode/",
+    # -- path traversal / LFI / RFI --
     r"\.\./", r"\.\.\\", r"%2e%2e%2f", r"%252e%252e%252f", r"%c0%ae%c0%ae",
     r"php://(filter|input)", r"data://", r"expect://",
+    # -- injection --
     r"union\s+select", r"insert\s+into\s+\w+", r"sleep\(\d", r"waitfor\s+delay",
     r"\bor\s+1=1\b", r"benchmark\(",
     r"<script", r"onerror\s*=", r"javascript:",
     r";\s*(cat|whoami|id|ls|wget|curl)\b", r"\$\(.+\)",
     r"\$\{jndi:", r"[?&](cmd|exec|execute)=",
+    # -- webshell / backdoor isimleri --
     r"/(shell|c99|r57|wso|b374k)\.(php|jsp|asp|aspx)",
 ]
 
@@ -84,6 +106,8 @@ BUILTIN_UA_SIGNATURES = [
     r"wpscan", r"havij",
 ]
 
+# Nginx 'combined' log format:
+# $remote_addr - $remote_user [$time_local] "$request" $status $body_bytes_sent "$http_referer" "$http_user_agent"
 LOG_LINE_RE = re.compile(
     r'^(?P<ip>\S+) \S+ \S+ \[(?P<time>[^\]]+)\] '
     r'"(?P<method>\S+) (?P<path>\S+)(?: \S+)?" '
@@ -91,6 +115,9 @@ LOG_LINE_RE = re.compile(
     r'"(?P<referer>[^"]*)" "(?P<ua>[^"]*)"'
 )
 
+# X-Forwarded-For eklenmis genisletilmis format (trust_x_forwarded_for=true
+# icin). nginx.conf'ta log_format'in sonuna '"$http_x_forwarded_for"'
+# eklenmis olmasi gerekir, ornek asagida.
 EXTENDED_LOG_LINE_RE = re.compile(
     r'^(?P<ip>\S+) \S+ \S+ \[(?P<time>[^\]]+)\] '
     r'"(?P<method>\S+) (?P<path>\S+)(?: \S+)?" '
@@ -98,12 +125,20 @@ EXTENDED_LOG_LINE_RE = re.compile(
     r'"(?P<referer>[^"]*)" "(?P<ua>[^"]*)" "(?P<xff>[^"]*)"'
 )
 
+# Ana format hic eslesmezse (bozuk/binary/protokol ihlali satirlar) en
+# azindan IP'yi cikarmayi dene -- ONCEDEN bu satirlar sessizce atiliyordu.
 LOOSE_IP_RE = re.compile(r'^(?P<ip>\S+)\s')
 
 log = logging.getLogger("nginx_watcher")
 
 
+# ── PATH NORMALIZASYONU ─────────────────────────────────────────────
 def _safe_unquote(s, rounds=1):
+    """
+    Path'i en fazla `rounds` kez yuzde-decode eder (double/triple encoding
+    ile imza atlatmaya karsi). Sonsuz donguye girmemesi icin sabit sayida
+    tur uygular ve degisim durmussa erken cikar.
+    """
     out = s
     seen = {out}
     for _ in range(rounds):
@@ -118,7 +153,19 @@ def _safe_unquote(s, rounds=1):
     return out
 
 
+# ── UZAKTAN GUNCELLENEN IMZA LISTESI ────────────────────────────────
 class PatternStore:
+    """
+    Saldiri imzalarini (path + UA regex listeleri) yonetir.
+    Oncelik sirasi:
+      1) Bellekte aktif olan (once yuklenen) liste
+      2) Diskteki cache dosyasi
+      3) Koddaki BUILTIN_* varsayilanlari
+    Varsayilan olarak gunde bir kez patterns.url'den guncel listeyi
+    cekmeyi dener; basarisiz olursa sessizce elindeki listeyle calismaya
+    devam eder (watcher hicbir zaman network hatasindan dolayi durmaz).
+    """
+
     def __init__(self, cfg):
         self.url = cfg.get("url")
         self.cache_path = cfg.get("cache_path")
@@ -170,6 +217,7 @@ class PatternStore:
         )
 
     def maybe_update(self, now):
+        """Ana donguden her turda cagrilir; interval dolmadiysa hemen doner."""
         if not self.url:
             return
         if (now - self._last_check) < self.update_interval_s:
@@ -206,6 +254,7 @@ class PatternStore:
             log.warning(f"[patterns] cache yazilamadi ({self.cache_path}): {e}")
 
 
+# ── CONFIG YUKLEME ──────────────────────────────────────────────────
 def _deep_merge_defaults(cfg, user_cfg):
     for k, v in user_cfg.items():
         if k in ("thresholds", "patterns") and isinstance(v, dict) and isinstance(cfg.get(k), dict):
@@ -255,7 +304,13 @@ def setup_logging(cfg, verbose):
             log.warning(f"Dosyaya loglama acilamadi ({log_file}): {e}")
 
 
+# ── LOG TAILER (polling tabanli, rotate-aware) ──────────────────────
 class LogTailer:
+    """
+    Bir log dosyasini periyodik olarak yeni satirlar icin okur.
+    Logrotate sonrasi dosya boyutu kuculurse (ya da inode degisirse) basa sarar.
+    """
+
     def __init__(self, path):
         self.path = path
         self._fh = None
@@ -305,6 +360,75 @@ class LogTailer:
         return self._fh.readlines()
 
 
+# ── COKLU SITE LOG IZLEME ────────────────────────────────────────────
+def resolve_log_paths(cfg):
+    """log_path + log_paths + log_path_glob'dan benzersiz path listesi uretir."""
+    paths = set()
+    single = cfg.get("log_path")
+    if single:
+        paths.add(single)
+    for p in cfg.get("log_paths") or []:
+        paths.add(p)
+    pattern = cfg.get("log_path_glob")
+    if pattern:
+        paths.update(glob.glob(pattern))
+    return paths
+
+
+class MultiLogTailer:
+    """
+    Birden fazla site/vhost log dosyasini ayni anda izler (ornek: CloudPanel'de
+    her site kendi /home/<site>/logs/nginx/access.log dosyasina yazar).
+    log_path_glob verilmisse, discover_interval_s surede bir yeniden tarayip
+    yeni eklenen siteleri de otomatik izlemeye baslar -- config'e dokunmaya
+    ya da servisi restart etmeye gerek kalmaz.
+    """
+
+    def __init__(self, cfg):
+        self.cfg = cfg
+        self.discover_interval_s = cfg.get("log_discover_interval_s", 300)
+        self._last_discover = 0.0
+        self.tailers = {}  # path -> LogTailer
+        self._discover(initial=True)
+
+    def _discover(self, initial=False):
+        paths = resolve_log_paths(self.cfg)
+        new_paths = paths - set(self.tailers.keys())
+        gone_paths = set(self.tailers.keys()) - paths
+        for p in sorted(new_paths):
+            if os.path.isfile(p):
+                self.tailers[p] = LogTailer(p)
+                log.info(f"[multilog] izlemeye baslandi: {p}")
+            elif initial:
+                log.warning(f"[multilog] dosya henuz yok, sonra denenecek: {p}")
+        for p in gone_paths:
+            del self.tailers[p]
+            log.info(f"[multilog] artik yok, birakildi: {p}")
+        if initial:
+            log.info(f"[multilog] toplam {len(self.tailers)} log dosyasi izleniyor")
+
+    def maybe_rediscover(self, now):
+        if (now - self._last_discover) < self.discover_interval_s:
+            return
+        self._last_discover = now
+        self._discover()
+
+    def read_new_lines(self):
+        """path -> [lines] seklinde, sadece yeni satiri olan dosyalar icin doner."""
+        result = {}
+        # Henuz dosyasi olusmamis (initial=True'da atlanan) path'leri de tekrar dene
+        for p in resolve_log_paths(self.cfg):
+            if p not in self.tailers and os.path.isfile(p):
+                self.tailers[p] = LogTailer(p)
+                log.info(f"[multilog] izlemeye baslandi (gecikmeli): {p}")
+        for p, tailer in self.tailers.items():
+            lines = tailer.read_new_lines()
+            if lines:
+                result[p] = lines
+        return result
+
+
+# ── PARSE ────────────────────────────────────────────────────────────
 def parse_line(line, extended=False):
     rex = EXTENDED_LOG_LINE_RE if extended else LOG_LINE_RE
     m = rex.match(line)
@@ -318,6 +442,8 @@ def parse_line(line, extended=False):
             if extended:
                 xff = m.group("xff")
                 if xff and xff != "-":
+                    # XFF birden fazla IP icerebilir (proxy zinciri); en soldaki
+                    # (istemciye en yakin) genelde gercek istemcidir.
                     ip = xff.split(",")[0].strip() or ip
             return {
                 "ip": ip,
@@ -327,6 +453,9 @@ def parse_line(line, extended=False):
                 "ua": m.group("ua"),
                 "malformed": False,
             }
+    # Ana format eslesmedi. ONCEDEN bu satirlar sessizce atiliyordu; bozuk/
+    # protokol-ihlali/binary payload iceren istekler cogu zaman tam da
+    # saldiri gostergesidir. En azindan IP'yi cikarip malformed olarak isaretle.
     m2 = LOOSE_IP_RE.match(line)
     if m2:
         return {
@@ -340,15 +469,19 @@ def parse_line(line, extended=False):
     return None
 
 
+# ── PATTERN MOTORU ───────────────────────────────────────────────────
 class PatternEngine:
     def __init__(self, thresholds, cooldown_s, ignore_ips, patterns, ignore_path_prefixes=None):
         self.thresholds = thresholds
         self.cooldown_s = cooldown_s
         self.ignore_ips = set(ignore_ips or [])
         self.ignore_path_prefixes = tuple(ignore_path_prefixes or [])
-        self.patterns = patterns
+        self.patterns = patterns  # PatternStore instance
+        # ip -> pattern_type -> deque[timestamp]
         self.windows = collections.defaultdict(lambda: collections.defaultdict(collections.deque))
+        # (ip, pattern_type) -> last_sent_epoch
         self.cooldowns = {}
+        # sig_name -> deque[(ts, ip)]  (dagitik/cok-IP tespiti icin, cooldown'dan bagimsiz)
         self.global_windows = collections.defaultdict(collections.deque)
         self.global_cooldowns = {}
 
@@ -394,12 +527,19 @@ class PatternEngine:
         }))
 
     def process(self, parsed, now):
+        """
+        parsed: parse_line() ciktisi.
+        Donus: list of (pattern_type, detail_dict) -- bir satir birden fazla
+        pattern tetikleyebilir. distributed_signature olaylarinda 'ip' alani
+        tek bir IP degil, ornek IP listesidir (detail icinde).
+        """
         ip = parsed["ip"]
         if ip in self.ignore_ips:
             return []
 
         events = []
 
+        # Bozuk/parse edilemeyen satirlar: ONCEDEN tamamen atiliyordu.
         if parsed.get("malformed"):
             cfg = self.thresholds.get("malformed_request", {})
             if cfg.get("enabled", True):
@@ -419,6 +559,7 @@ class PatternEngine:
         if path and self.ignore_path_prefixes and path.startswith(self.ignore_path_prefixes):
             return []
 
+        # 404 flood
         cfg = self.thresholds.get("404_flood", {})
         if cfg.get("enabled") and status == 404:
             window_s = cfg.get("window_s", 60)
@@ -430,6 +571,7 @@ class PatternEngine:
                 }))
                 self._mark_sent(ip, "404_flood", now)
 
+        # auth flood (401/403)
         cfg = self.thresholds.get("auth_flood", {})
         if cfg.get("enabled") and status in (401, 403):
             window_s = cfg.get("window_s", 60)
@@ -441,6 +583,7 @@ class PatternEngine:
                 }))
                 self._mark_sent(ip, "auth_flood", now)
 
+        # rate flood (genel istek hizi, status'tan bagimsiz)
         cfg = self.thresholds.get("rate_flood", {})
         if cfg.get("enabled"):
             window_s = cfg.get("window_s", 10)
@@ -452,6 +595,8 @@ class PatternEngine:
                 }))
                 self._mark_sent(ip, "rate_flood", now)
 
+        # path signature -- artik ham path'in yaninda 1x ve 2x yuzde-decode
+        # edilmis halleriyle de kontrol ediliyor (double-encoding atlatmasina karsi)
         cfg = self.thresholds.get("path_signature", {})
         if cfg.get("enabled") and path:
             once = _safe_unquote(path, rounds=1)
@@ -465,6 +610,7 @@ class PatternEngine:
                     self._mark_sent(ip, "path_signature", now)
                 self._maybe_emit_distributed("path_signature", now, events)
 
+        # user-agent signature
         cfg = self.thresholds.get("ua_signature", {})
         if cfg.get("enabled"):
             ua_is_empty = (not ua) or ua == "-"
@@ -481,6 +627,7 @@ class PatternEngine:
         return events
 
     def cleanup_old(self, now, max_age_s=3600):
+        """Bellek sismesini onlemek icin eski windows/cooldown girdilerini temizler."""
         stale_ips = []
         for ip, pmap in self.windows.items():
             all_old = True
@@ -502,6 +649,7 @@ class PatternEngine:
             del self.global_cooldowns[k]
 
 
+# ── SIBERKAPAN'A GONDERIM ───────────────────────────────────────────
 def send_to_siberkapan(api_url, api_key, ip, pattern_type, detail, timeout=8):
     payload = json.dumps({
         "ip": ip,
@@ -533,6 +681,7 @@ def send_to_siberkapan(api_url, api_key, ip, pattern_type, detail, timeout=8):
         return None, f"unexpected_error: {e}"
 
 
+# ── ANA DONGU ────────────────────────────────────────────────────────
 def run(cfg, verbose=False):
     setup_logging(cfg, verbose)
 
@@ -540,17 +689,19 @@ def run(cfg, verbose=False):
         log.error("api_key bos. Config dosyasina veya SIBERKAPAN_API_KEY ortam degiskenine key girilmeli.")
         sys.exit(1)
 
-    if not os.path.isfile(cfg["log_path"]):
-        log.warning(f"Log dosyasi henuz yok: {cfg['log_path']} - bekleniyor...")
+    resolved = resolve_log_paths(cfg)
+    if not resolved:
+        log.error("Izlenecek hicbir log_path/log_paths/log_path_glob bulunamadi.")
+        sys.exit(1)
 
     extended = bool(cfg.get("trust_x_forwarded_for"))
     if extended:
         log.info("trust_x_forwarded_for=true — nginx log_format'in sonuna \"$http_x_forwarded_for\" eklenmis olmali")
 
-    log.info(f"SiberKapan Nginx Watcher baslatildi. log={cfg['log_path']} api={cfg['api_url']}")
+    log.info(f"SiberKapan Nginx Watcher baslatildi. {len(resolved)} log kaynagi taniniyor, api={cfg['api_url']}")
 
     patterns = PatternStore(cfg.get("patterns", {}))
-    tailer = LogTailer(cfg["log_path"])
+    tailer = MultiLogTailer(cfg)
     engine = PatternEngine(
         cfg["thresholds"], cfg["cooldown_s"], cfg.get("ignore_ips"),
         patterns, cfg.get("ignore_path_prefixes")
@@ -562,27 +713,28 @@ def run(cfg, verbose=False):
         now = time.time()
 
         patterns.maybe_update(now)
+        tailer.maybe_rediscover(now)
 
-        lines = tailer.read_new_lines()
-        for raw_line in lines:
-            parsed = parse_line(raw_line.rstrip("\n"), extended=extended)
-            if not parsed:
-                continue
-
-            events = engine.process(parsed, now)
-            for pattern_type, detail in events:
-                send_ip = parsed["ip"]
-                if pattern_type == "distributed_signature":
-                    send_ip = "distributed"
-                try:
-                    status, body = send_to_siberkapan(cfg["api_url"], cfg["api_key"], send_ip, pattern_type, detail)
-                except Exception as e:
-                    log.error(f"BEKLENMEYEN HATA gonderim sirasinda ip={send_ip} pattern={pattern_type}: {e}")
+        for log_path, lines in tailer.read_new_lines().items():
+            for raw_line in lines:
+                parsed = parse_line(raw_line.rstrip("\n"), extended=extended)
+                if not parsed:
                     continue
-                if status == 200:
-                    log.info(f"GONDERILDI ip={send_ip} pattern={pattern_type} -> {body}")
-                else:
-                    log.warning(f"GONDERIM HATASI ip={send_ip} pattern={pattern_type} status={status} body={body}")
+
+                events = engine.process(parsed, now)
+                for pattern_type, detail in events:
+                    send_ip = parsed["ip"]
+                    if pattern_type == "distributed_signature":
+                        send_ip = "distributed"  # tek IP degil, detail.sample_ips'e bakin
+                    try:
+                        status, body = send_to_siberkapan(cfg["api_url"], cfg["api_key"], send_ip, pattern_type, detail)
+                    except Exception as e:
+                        log.error(f"BEKLENMEYEN HATA gonderim sirasinda ip={send_ip} pattern={pattern_type}: {e}")
+                        continue
+                    if status == 200:
+                        log.info(f"GONDERILDI site={log_path} ip={send_ip} pattern={pattern_type} -> {body}")
+                    else:
+                        log.warning(f"GONDERIM HATASI site={log_path} ip={send_ip} pattern={pattern_type} status={status} body={body}")
 
         if (now - last_cleanup) > 300:
             engine.cleanup_old(now)
