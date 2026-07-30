@@ -279,7 +279,7 @@ Threat scores are not permanent. An IP that was part of a botnet three months ag
 - MISP feed events
 - ASN abuse notifications
 
-This policy was learned the hard way: early versions submitted UDP flood detections to AbuseIPDB under the DDoS category, which violated AbuseIPDB's reporting policy and resulted in a temporary reporting suspension. The fix was shipped the same day and the policy has been enforced at the data pipeline level ever since.
+This is consistent with AbuseIPDB's own reporting policy, which explicitly disallows UDP-based submissions due to the same spoofing concerns. The exclusion is enforced at the data pipeline level, not as a UI filter — meaning UDP-only IPs cannot reach any external reporting channel regardless of how the submission is triggered.
 
 **Novel detection methodology:** The platform's "novel detection" metric (percentage of IPs not previously known to AbuseIPDB) is calculated only against organically detected IPs — honeypot, FortiGate, Nginx Watcher, and Fail2ban sources. External feed aggregations (Feodo Tracker, URLhaus, Emerging Threats) are excluded from this calculation, as they consist of already-known global threats and would artificially deflate the metric.
 
@@ -295,10 +295,7 @@ This policy was learned the hard way: early versions submitted UDP flood detecti
 
 
 
-- **Backend:** Python 3.12, Flask, SQLAlchemy, APScheduler
-- **Database:** SQLite
-- **Web Server:** Nginx + Gunicorn
-- **Infrastructure:** Ubuntu 24 LTS
+
 - **Standards:** STIX 2.1, TAXII 2.1, RSS/Atom, REST
 - **Integrations:** MISP, AbuseIPDB, AlienVault OTX, Spamhaus, Suricata, Wazuh
 
