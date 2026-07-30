@@ -5,54 +5,82 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-Python%20%2F%20Flask-green.svg)]()
 [![Feed](https://img.shields.io/badge/Threat%20Feed-Live-brightgreen.svg)](https://siberkapan.org/api/v1/status)
+[![MISP](https://img.shields.io/badge/MISP-Official%20Feed-blueviolet.svg)](https://siberkapan.org/misp-feed/manifest.json)
+[![TAXII](https://img.shields.io/badge/TAXII-2.1-orange.svg)](https://siberkapan.org/taxii/)
 [![CVE](https://img.shields.io/badge/CVE%20Records-1600%2B-red.svg)](https://siberkapan.org/rss/cve)
 
-SiberKapan is a community-driven threat intelligence platform focused on cyber threats targeting Turkish infrastructure. It aggregates threat data from FortiGate community webhooks, trusted external feeds, and CISA KEV — and delivers it as actionable blocklists, CVE feeds, and REST API endpoints.
+SiberKapan is a community-driven threat intelligence platform focused on cyber threats targeting Turkish infrastructure. It aggregates threat data from FortiGate community webhooks, honeypot sensors, Nginx log analysis, Fail2ban, and trusted external feeds — delivering actionable blocklists, STIX 2.1 bundles, TAXII 2.1 endpoints, and REST API outputs.
 
-🌐 **Live Platform:** [https://siberkapan.org](https://siberkapan.org)  
-📡 **API Status:** [https://siberkapan.org/api/v1/status](https://siberkapan.org/api/v1/status)  
+🌐 **Live Platform:** [https://siberkapan.org](https://siberkapan.org)
+📡 **API Status:** [https://siberkapan.org/api/v1/status](https://siberkapan.org/api/v1/status)
 📄 **Methodology:** [https://siberkapan.org/metodoloji](https://siberkapan.org/metodoloji)
+📊 **Threat Reports:** [https://siberkapan.org/tehdit-raporlari](https://siberkapan.org/tehdit-raporlari)
+
+---
+
+## Recognition & Ecosystem Integration
+
+| Platform | Status | Details |
+|----------|--------|---------|
+| **MISP** | ✅ Official Feed | Feed PR merged — [manifest](https://siberkapan.org/misp-feed/manifest.json) |
+| **AbuseIPDB** | ✅ Webmaster & Contributor | Active IP reporting |
+| **AlienVault OTX** | ✅ Pulse Publisher | Daily IOC pulses |
+| **Spamhaus** | ✅ Submission Partner | Active IP reporting |
+| **TAXII 2.1** | ✅ Live | [https://siberkapan.org/taxii/](https://siberkapan.org/taxii/) |
+| **Suricata IDS** | ✅ Export | `/api/v1/export/suricata` |
+| **Wazuh SIEM** | ✅ Export | `/api/v1/export/wazuh-cdb` |
+| **TR Presidential Cybersecurity Cluster** | ✅ Member | Cumhurbaşkanlığı DDO Siber Güvenlik Kümesi |
 
 ---
 
 ## Features
 
-- **FortiGate Automation Stitch Integration** — Real-time attacker IP submission via webhook
+- **FortiGate Automation Stitch Integration** — Real-time attacker IP submission via webhook from FortiGate Security Fabric
 - **HoneypotKapan** — Open-source honeypot emulating 10 services (SSH, RDP, FTP, Telnet, SMB, MySQL, MSSQL, VNC, HTTP, SIP); one-command install
-- **Nginx Watcher** — Zero-dependency Python agent detecting 404/auth/rate floods and exploit signatures from nginx access logs; one-command install
-- **Community Blocklists** — TXT, JSON, CIDR, FortiGate CLI, iptables formats
-- **CVE Feed** — 1,600+ CISA KEV records with vendor-filtered RSS (Fortinet, Microsoft, Cisco, VMware...)
+- **Nginx Watcher** — Zero-dependency Python agent detecting 404/auth/rate floods and exploit signatures from nginx access logs
+- **Fail2ban Integration** — Automated ban event reporting
+- **MISP Official Feed** — STIX-compatible JSON feed, accepted into the MISP ecosystem
+- **TAXII 2.1 Server** — Standard protocol for enterprise SIEM/SOAR integration (Anomali, ThreatConnect, CERT platforms)
+- **Delta / Incremental Feed** — `?since=` parameter and ETag support to minimize bandwidth
+- **ASN Abuse Notification** — Automatic weekly abuse reports to network operators (Shadowserver model)
+- **AbuseIPDB / OTX / Spamhaus Reporting** — Active contributor to global threat databases
+- **IP Aging & Decay** — Automatic score decay and delisting for inactive IPs
+- **Community Blocklists** — TXT, JSON, CIDR, FortiGate CLI, iptables, Suricata rules, Wazuh CDB formats
+- **CVE Feed** — 1,600+ CISA KEV records with vendor-filtered RSS
 - **BGP / IP Lookup** — ASN, GeoIP, threat score, source attribution
-- **Country & Platform Lists** — RIPE NCC sourced prefix lists for 40+ countries
 - **STIX 2.1 Output** — Machine-readable threat intelligence bundle
-- **IP Delisting** — False positive reporting and review process
+- **IP Delisting** — False positive reporting with Cloudflare Turnstile protection
 - **TR/EN Bilingual** — Full Turkish and English interface
+- **Threat Reports** — Periodic threat intelligence reports with novel detection analysis
 
 ---
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                      Data Sources                        │
-│  FortiGate Webhooks │ Feodo │ URLhaus │ Emerging Threats │
-│  GreenSnow │ Binary Defense │ CINS │ BotScout │ CISA KEV │
-└────────────────────────┬────────────────────────────────┘
-                         │
-              ┌──────────▼──────────┐
-              │   SiberKapan Core   │
-              │   Flask / SQLite    │
-              │   APScheduler       │
-              │   GeoIP Enrichment  │
-              └──────────┬──────────┘
-                         │
-         ┌───────────────┼───────────────┐
-         │               │               │
-    ┌────▼────┐    ┌─────▼────┐   ┌─────▼──────┐
-    │REST API │    │ RSS/Atom │   │  Blocklist  │
-    │JSON/TXT │    │CVE + IOC │   │  Downloads  │
-    │STIX 2.1 │    │Vendor    │   │  TXT/CIDR   │
-    └─────────┘    └──────────┘   └────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│                          Data Sources                             │
+│  FortiGate Webhooks │ HoneypotKapan │ Nginx Watcher │ Fail2ban   │
+│  Feodo │ URLhaus │ Emerging Threats │ CISA KEV                   │
+└──────────────────────────┬───────────────────────────────────────┘
+                           │
+                ┌──────────▼──────────┐
+                │   SiberKapan Core   │
+                │   Flask / SQLite    │
+                │   APScheduler       │
+                │   GeoIP Enrichment  │
+                │   IP Decay Engine   │
+                └──────────┬──────────┘
+                           │
+      ┌────────────────────┼────────────────────┐
+      │                    │                    │
+ ┌────▼────┐         ┌─────▼────┐        ┌─────▼──────┐
+ │REST API │         │ TAXII    │        │  Reporting  │
+ │STIX 2.1 │         │ 2.1      │        │  AbuseIPDB  │
+ │Delta    │         │ MISP     │        │  OTX        │
+ │Suricata │         │ Feed     │        │  Spamhaus   │
+ │Wazuh    │         │          │        │  ASN Notify │
+ └─────────┘         └──────────┘        └────────────┘
 ```
 
 ---
@@ -89,24 +117,41 @@ Header: Content-Type: application/json
 - Trigger: `IPS Event` or `Anomaly Logs`
 - Action: The webhook action above
 
-**3. Request an API Key**  
+**3. Request an API Key**
 Contact via [siberkapan.org/iletisim](https://siberkapan.org/iletisim)
 
 ---
-## Quick Start — Honeypot & Nginx Watcher
 
-Two lightweight, open-source agents that feed attacker IPs directly into SiberKapan:
+## Quick Start — Honeypot & Nginx Watcher
 
 | Agent | What It Detects | Install |
 |-------|-----------------|---------|
-| [HoneypotKapan](honeypot/) | SSH, RDP, FTP, Telnet, SMB, MySQL, MSSQL, VNC, HTTP, SIP — credential capture | `wget https://siberkapan.org/honeypot/install.py && sudo python3 install.py` |
-| [Nginx Watcher](nginx-watcher/) | 404/auth/rate flood, exploit path signatures, scanner User-Agents | `curl -fsSL https://siberkapan.org/nginx-watcher/install.sh \| sudo bash -s -- --key=YOUR_KEY` |
+| [HoneypotKapan](honeypot/) | SSH, RDP, FTP, Telnet, SMB, MySQL, MSSQL, VNC, HTTP, SIP | `wget https://siberkapan.org/honeypot/install.py && sudo python3 install.py` |
+| [Nginx Watcher](nginx-watcher/) | 404/auth/rate flood, exploit path signatures, scanner UAs | `curl -fsSL https://siberkapan.org/nginx-watcher/install.sh \| sudo bash -s -- --key=YOUR_KEY` |
 
-Both require a SiberKapan API key ([request one here](https://siberkapan.org/iletisim)) and run as systemd services with zero external dependencies. See each agent's README for full configuration options.
+---
 
 ## API Reference
 
-### Blocklist Endpoints
+### Feed Endpoints (Delta/ETag supported)
+
+| Endpoint | Format | Description |
+|----------|--------|-------------|
+| `/api/v1/view/all-feed` | TXT | All sources combined — supports `?since=` |
+| `/api/v1/view/fortigate-feed` | TXT | FortiGate community feed — supports `?since=` |
+| `/api/v1/view/honeypot-feed` | TXT | HoneypotKapan feed — supports `?since=` |
+| `/api/v1/view/nginx-feed` | TXT | Nginx Watcher feed — supports `?since=` |
+
+**Delta fetch example:**
+```bash
+# Only IPs added after a specific timestamp
+curl "https://siberkapan.org/api/v1/view/all-feed?since=2026-07-01T00:00:00Z"
+
+# ETag-based caching (returns 304 if unchanged)
+curl -H "If-None-Match: \"sk-abc123\"" https://siberkapan.org/api/v1/view/all-feed
+```
+
+### Blocklist Export Endpoints
 
 | Endpoint | Format | Description |
 |----------|--------|-------------|
@@ -115,8 +160,54 @@ Both require a SiberKapan API key ([request one here](https://siberkapan.org/ile
 | `/api/v1/list/cidr` | CIDR | CIDR notation |
 | `/api/v1/list/fortigate` | TXT | FortiGate CLI format |
 | `/api/v1/list/iptables` | SH | iptables bash script |
-| `/api/v1/list/country/{CC}` | TXT | Country-filtered list |
-| `/api/v1/list/platform/{tag}` | TXT | Platform-filtered list |
+| `/api/v1/export/suricata` | rules | Suricata IDS drop/alert rules |
+| `/api/v1/export/wazuh-cdb` | CDB | Wazuh SIEM CDB list |
+
+**Suricata integration:**
+```bash
+curl -o /etc/suricata/rules/siberkapan.rules \
+  "https://siberkapan.org/api/v1/export/suricata?min_score=75"
+```
+
+**Wazuh integration:**
+```bash
+curl -o /var/ossec/etc/lists/siberkapan-blocklist \
+  "https://siberkapan.org/api/v1/export/wazuh-cdb?min_score=75"
+```
+
+### TAXII 2.1 Endpoints
+
+| Endpoint | Description |
+|----------|-------------|
+| `/taxii/` | Discovery |
+| `/taxii/api-root/` | API Root |
+| `/taxii/api-root/collections/` | Collections list |
+| `/taxii/api-root/collections/{id}/objects/` | STIX objects (supports `added_after`) |
+| `/taxii/api-root/collections/{id}/manifest/` | Object manifest |
+
+**Collections:**
+
+| ID | Name | Description |
+|----|------|-------------|
+| `a1b2c3d4-0001-4000-8000-siberkapan01` | All Threats | All approved IPs |
+| `a1b2c3d4-0002-4000-8000-siberkapan02` | High Risk | Score 75+ |
+| `a1b2c3d4-0003-4000-8000-siberkapan03` | Honeypot | Honeypot detections |
+
+```bash
+# TAXII discovery
+curl -H "Accept: application/taxii+json;version=2.1" https://siberkapan.org/taxii/
+
+# Fetch STIX objects
+curl "https://siberkapan.org/taxii/api-root/collections/a1b2c3d4-0001-4000-8000-siberkapan01/objects/?limit=100"
+```
+
+### MISP Feed
+
+```
+https://siberkapan.org/misp-feed/manifest.json
+```
+
+Add to MISP: Administration → Feeds → Add Feed → URL: `https://siberkapan.org/misp-feed/`
 
 ### CVE / Threat Intel
 
@@ -124,32 +215,12 @@ Both require a SiberKapan API key ([request one here](https://siberkapan.org/ile
 |----------|-------------|
 | `/api/v1/cve` | CISA KEV CVE records (JSON) |
 | `/api/v1/cve?vendor=fortinet` | Vendor-filtered CVEs |
-| `/api/v1/cve/vendors` | Available vendors with counts |
 | `/rss/cve` | CVE RSS feed |
-| `/rss/cve?vendor=microsoft` | Vendor-filtered CVE RSS |
 | `/rss/ioc` | IOC RSS feed |
 | `/api/v1/stix` | STIX 2.1 bundle |
 | `/api/v1/bgp/{ip}` | IP reputation & BGP lookup |
+| `/api/v1/ip/{ip}` | IP threat intelligence lookup (JSON) |
 | `/api/v1/status` | Platform status |
-
-### Example
-
-```bash
-# Get full blocklist
-curl https://siberkapan.org/api/v1/list/txt
-
-# Get Fortinet CVEs as JSON
-curl https://siberkapan.org/api/v1/cve?vendor=fortinet
-
-# Submit attacker IP (requires API key)
-curl -X POST https://siberkapan.org/feed/fortigate \
-  -H "Content-Type: application/json" \
-  -H "X-SiberKapan-Key: YOUR_KEY" \
-  -d '{"ip":"1.2.3.4","attack_type":"ssh_brute_force","severity":"high","port":22}'
-
-# STIX 2.1 bundle (high confidence only)
-curl "https://siberkapan.org/api/v1/stix?limit=100&min_score=75"
-```
 
 ---
 
@@ -164,7 +235,7 @@ curl "https://siberkapan.org/api/v1/stix?limit=100&min_score=75"
 | External Feed | 50 | Initial score, source dependent |
 | Bulk API | +15 | Batch submission |
 
-Scores are cumulative (max 100). See full methodology at [siberkapan.org/metodoloji](https://siberkapan.org/metodoloji).
+Scores are cumulative (max 100). IPs decay at -2 points/day after 30 days of inactivity and are automatically delisted below score 15.
 
 ---
 
@@ -173,14 +244,12 @@ Scores are cumulative (max 100). See full methodology at [siberkapan.org/metodol
 | Source | Type | Update |
 |--------|------|--------|
 | FortiGate Community Webhooks | Community | Real-time |
+| HoneypotKapan Sensors | Community | Real-time |
+| Nginx Watcher Agents | Community | Real-time |
+| Fail2ban Reports | Community | Real-time |
 | [Feodo Tracker](https://feodotracker.abuse.ch) | External | 6h |
 | [URLhaus](https://urlhaus.abuse.ch) | External | 6h |
 | [Emerging Threats](https://rules.emergingthreats.net) | External | 12h |
-| [GreenSnow](https://blocklist.greensnow.co) | External | 6h |
-| [Blocklist.de](https://www.blocklist.de) | External | 6h |
-| [Binary Defense](https://www.binarydefense.com) | External | 6h |
-| [CINS Score](http://cinsscore.com) | External | 6h |
-| [BotScout](https://raw.githubusercontent.com/firehol/blocklist-ipsets) | External | 6h |
 | [CISA KEV](https://www.cisa.gov/known-exploited-vulnerabilities-catalog) | CVE | Daily |
 | [RIPE NCC](https://stat.ripe.net) | Country Prefixes | On-demand |
 
@@ -192,23 +261,25 @@ Scores are cumulative (max 100). See full methodology at [siberkapan.org/metodol
 - **Database:** SQLite
 - **Web Server:** Nginx + Gunicorn
 - **Infrastructure:** Ubuntu 24 LTS
-- **Standards:** STIX 2.1, RSS/Atom, REST
+- **Standards:** STIX 2.1, TAXII 2.1, RSS/Atom, REST
+- **Integrations:** MISP, AbuseIPDB, AlienVault OTX, Spamhaus, Suricata, Wazuh
 
 ---
 
-## Recognition
+## Threat Reports
 
-- Member of **Turkey Presidential Cybersecurity Cluster** (Cumhurbaşkanlığı Dijital Dönüşüm Ofisi Siber Güvenlik Kümesi)
-- Trademark registered at TÜRKPATENT (Classes 38 & 42)
+Periodic threat intelligence reports analyzing detection trends, novel threat discovery rates, and attack pattern analysis.
+
+- [Sayı 1 — June–July 2026](https://siberkapan.org/tehdit-raporlari/sayi-1) | [EN PDF](https://siberkapan.org/static/reports/siberkapan-tehdit-raporu-sayi1-en.pdf) | [TR PDF](https://siberkapan.org/static/reports/siberkapan-tehdit-raporu-sayi1-tr.pdf)
 
 ---
 
 ## IP Delisting
 
-If you believe your IP has been incorrectly listed, submit a delisting request at:  
+If you believe your IP has been incorrectly listed:
 👉 [https://siberkapan.org/delist](https://siberkapan.org/delist)
 
-Every request is reviewed within 48 hours.
+Every request is reviewed within 48 hours. Bot protection via Cloudflare Turnstile.
 
 ---
 
@@ -216,16 +287,10 @@ Every request is reviewed within 48 hours.
 
 MIT License — see [LICENSE](LICENSE) for details.
 
-Data from external feeds is subject to the respective source licenses:
-- Feodo Tracker: [abuse.ch](https://abuse.ch)
-- URLhaus: [abuse.ch](https://abuse.ch)
-- Emerging Threats: [Proofpoint](https://rules.emergingthreats.net)
-- CISA KEV: Public domain (US Government)
-
 ---
 
 ## Contact
 
 - **Platform:** [siberkapan.org](https://siberkapan.org)
 - **Contact Form:** [siberkapan.org/iletisim](https://siberkapan.org/iletisim)
-- **Developer:** [Oktay ALVER](https://www.linkedin.com/in/oktayalver/?lipi=urn%3Ali%3Apage%3Ad_flagship3_profile_view_base_contact_details%3B7PtqsXxcQ62UbG%2BVJgWgCg%3D%3D)
+- **Developer:** [Oktay ALVER](https://www.linkedin.com/in/oktayalver/)
