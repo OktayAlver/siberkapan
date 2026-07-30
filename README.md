@@ -255,7 +255,45 @@ Scores are cumulative (max 100). IPs decay at -2 points/day after 30 days of ina
 
 ---
 
-## Tech Stack
+## Security & Data Quality
+
+Building a threat intelligence platform introduces unique challenges around data integrity, false positives, and adversarial manipulation. SiberKapan addresses these systematically:
+
+### IP Aging & Automatic Delisting
+
+Threat scores are not permanent. An IP that was part of a botnet three months ago may have been reassigned to a legitimate user. SiberKapan implements a time-based decay mechanism modeled after AbuseIPDB's own scoring philosophy:
+
+- **Grace period:** IPs with recent activity (last 30 days) are protected from decay
+- **Daily decay:** After the grace period, the threat score decreases by 2 points per day
+- **Automatic delisting:** When a score drops below 15, the IP is removed from all feeds and blocklists — but the record is retained for audit purposes
+- **Natural reset:** Any new detection resets the decay counter, preventing premature delisting of persistent threats
+- **Implementation:** Decay runs as a bulk database operation rather than row-by-row updates, preventing lock contention in a concurrent multi-worker environment
+
+### False Positive Prevention
+
+**Infrastructure allowlisting:** CDN and cloud proxy infrastructure (Cloudflare, Fastly, AWS CloudFront, Google) is automatically excluded from threat feeds. When a reverse proxy sits in front of a monitored web server, naive log analysis would flag the proxy's edge nodes as attackers. SiberKapan resolves this by cross-referencing detected IPs against official published CIDR ranges from each provider — updated every 24 hours. IPs identified as infrastructure are tagged and excluded from feeds, novel detection calculations, and AbuseIPDB reporting.
+
+**UDP spoofing protection:** UDP connections cannot be attributed to a verified source IP due to the connectionless nature of the protocol and the feasibility of source address spoofing. All UDP-only detections (UDP flood, UDP scan, session-based UDP anomalies) are retained in the internal database for traffic analysis but are explicitly excluded from:
+- All public feed endpoints
+- AbuseIPDB submissions
+- MISP feed events
+- ASN abuse notifications
+
+This policy was learned the hard way: early versions submitted UDP flood detections to AbuseIPDB under the DDoS category, which violated AbuseIPDB's reporting policy and resulted in a temporary reporting suspension. The fix was shipped the same day and the policy has been enforced at the data pipeline level ever since.
+
+**Novel detection methodology:** The platform's "novel detection" metric (percentage of IPs not previously known to AbuseIPDB) is calculated only against organically detected IPs — honeypot, FortiGate, Nginx Watcher, and Fail2ban sources. External feed aggregations (Feodo Tracker, URLhaus, Emerging Threats) are excluded from this calculation, as they consist of already-known global threats and would artificially deflate the metric.
+
+### Data Poisoning & Abuse Prevention
+
+**Source verification:** FortiGate webhook submissions require a pre-issued API key. The key is bound to a specific contributor account and is used to attribute detections to a verified sensor. Unkeyed submissions are rejected.
+
+**Private IP rejection:** RFC 1918 private address space (10.x.x.x, 172.16.x.x, 192.168.x.x) and loopback addresses are rejected at the ingestion layer. These cannot represent real external threats and are a common vector for poisoning community blocklists.
+
+**Delisting with verification:** Delisting requests require a valid email address, pass Cloudflare Turnstile bot detection, and are rate-limited to 3 requests per 24 hours per submitter. All requests are manually reviewed; approved delistings are recorded for audit purposes.
+
+**Multi-source corroboration:** An IP detected by multiple independent sources (e.g., both a honeypot and a FortiGate sensor from different organizations) receives a higher confidence score. Single-source detections are scored conservatively.
+
+
 
 - **Backend:** Python 3.12, Flask, SQLAlchemy, APScheduler
 - **Database:** SQLite
