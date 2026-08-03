@@ -36,7 +36,9 @@ SiberKapan is a community-driven threat intelligence platform focused on cyber t
 ## Features
 
 - **FortiGate Automation Stitch Integration** — Real-time attacker IP submission via webhook from FortiGate Security Fabric
-- **HoneypotKapan** — Open-source honeypot emulating 10 services (SSH, RDP, FTP, Telnet, SMB, MySQL, MSSQL, VNC, HTTP, SIP); one-command install
+- **HoneypotKapan** — Open-source honeypot emulating 11 services (SSH, RDP, FTP, Telnet, SMB, MySQL, MSSQL, VNC, HTTP, SIP, SMTP); one-command install
+- **Malware Sample Capture** — SSH honeypot safely fingerprints malware attackers attempt to download (SHA256, SSRF-protected, never written to disk or executed), enriched via MalwareBazaar — see [siberkapan.org/malware-samples](https://siberkapan.org/malware-samples)
+- **Sigma Rule Export** — SIEM-agnostic detection rules (`/api/v1/export/sigma`) for Splunk, Elastic, Sentinel, QRadar via pySigma
 - **Nginx Watcher** — Zero-dependency Python agent detecting 404/auth/rate floods and exploit signatures from nginx access logs
 - **Fail2ban Integration** — Automated ban event reporting
 - **MISP Official Feed** — STIX-compatible JSON feed, accepted into the MISP ecosystem
@@ -80,6 +82,7 @@ SiberKapan is a community-driven threat intelligence platform focused on cyber t
  │Delta    │         │ MISP     │        │  OTX        │
  │Suricata │         │ Feed     │        │  Spamhaus   │
  │Wazuh    │         │          │        │  ASN Notify │
+ │Sigma    │         │          │        │             │
  └─────────┘         └──────────┘        └────────────┘
 ```
 
@@ -126,7 +129,7 @@ Contact via [siberkapan.org/iletisim](https://siberkapan.org/iletisim)
 
 | Agent | What It Detects | Install |
 |-------|-----------------|---------|
-| [HoneypotKapan](honeypot/) | SSH, RDP, FTP, Telnet, SMB, MySQL, MSSQL, VNC, HTTP, SIP | `wget https://siberkapan.org/honeypot/install.py && sudo python3 install.py` |
+| [HoneypotKapan](honeypot/) | SSH, RDP, FTP, Telnet, SMB, MySQL, MSSQL, VNC, HTTP, SIP, SMTP | `wget https://siberkapan.org/honeypot/install.py && sudo python3 install.py` |
 | [Nginx Watcher](nginx-watcher/) | 404/auth/rate flood, exploit path signatures, scanner UAs | `curl -fsSL https://siberkapan.org/nginx-watcher/install.sh \| sudo bash -s -- --key=YOUR_KEY` |
 
 ---
@@ -162,6 +165,7 @@ curl -H "If-None-Match: \"sk-abc123\"" https://siberkapan.org/api/v1/view/all-fe
 | `/api/v1/list/iptables` | SH | iptables bash script |
 | `/api/v1/export/suricata` | rules | Suricata IDS drop/alert rules |
 | `/api/v1/export/wazuh-cdb` | CDB | Wazuh SIEM CDB list |
+| `/api/v1/export/sigma` | YAML | Sigma detection rule (SIEM-agnostic) |
 
 **Suricata integration:**
 ```bash
@@ -173,6 +177,11 @@ curl -o /etc/suricata/rules/siberkapan.rules \
 ```bash
 curl -o /var/ossec/etc/lists/siberkapan-blocklist \
   "https://siberkapan.org/api/v1/export/wazuh-cdb?min_score=75"
+```
+
+**Sigma integration:**
+```bash
+curl -o siberkapan.yml "https://siberkapan.org/api/v1/export/sigma?min_score=40"
 ```
 
 ### TAXII 2.1 Endpoints
@@ -293,8 +302,16 @@ This is consistent with AbuseIPDB's own reporting policy, which explicitly disal
 
 **Multi-source corroboration:** An IP detected by multiple independent sources (e.g., both a honeypot and a FortiGate sensor from different organizations) receives a higher confidence score. Single-source detections are scored conservatively.
 
+### Malware Sample Handling
 
+SiberKapan's SSH honeypot captures malware samples that attackers attempt to download, without ever storing or executing them:
 
+- **SSRF protection:** The download URL's hostname is resolved and every returned address is validated as a public IP before any connection is made — private, loopback, link-local, and cloud-metadata addresses are rejected. The validated IP is connected to directly (not re-resolved), preventing DNS-rebinding bypass.
+- **No persistence:** The file is streamed, hashed (SHA256), and discarded — it is never written to disk and never executed.
+- **Bounded fetch:** 5MB size cap, 8-second timeout, maximum 3 redirects (each independently re-validated).
+- **Enrichment, not storage:** Captured hashes are checked against [MalwareBazaar](https://bazaar.abuse.ch) to identify known malware families, without SiberKapan ever hosting the file itself.
+
+---
 
 - **Standards:** STIX 2.1, TAXII 2.1, RSS/Atom, REST
 - **Integrations:** MISP, AbuseIPDB, AlienVault OTX, Spamhaus, Suricata, Wazuh
