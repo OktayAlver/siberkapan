@@ -1,15 +1,17 @@
+[🇹🇷 Türkçe](README.tr.md) · **English**
+
 # SiberKapan 🛡️
 
 **Turkey's Open-Source Cyber Threat Intelligence Platform**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Platform](https://img.shields.io/badge/Platform-Python%20%2F%20Flask-green.svg)]()
+[![Platform](https://img.shields.io/badge/Platform-Python-green.svg)]()
 [![Feed](https://img.shields.io/badge/Threat%20Feed-Live-brightgreen.svg)](https://siberkapan.org/api/v1/status)
 [![MISP](https://img.shields.io/badge/MISP-Official%20Feed-blueviolet.svg)](https://siberkapan.org/misp-feed/manifest.json)
 [![TAXII](https://img.shields.io/badge/TAXII-2.1-orange.svg)](https://siberkapan.org/taxii/)
 [![CVE](https://img.shields.io/badge/CVE%20Records-1600%2B-red.svg)](https://siberkapan.org/rss/cve)
 
-SiberKapan is a community-driven threat intelligence platform focused on cyber threats targeting Turkish infrastructure. It aggregates threat data from FortiGate community webhooks, honeypot sensors, Nginx log analysis, Fail2ban, and trusted external feeds — delivering actionable blocklists, STIX 2.1 bundles, TAXII 2.1 endpoints, and REST API outputs.
+SiberKapan is a community-driven threat intelligence platform focused on cyber threats targeting Turkish infrastructure. It aggregates threat data from FortiGate community webhooks, honeypot sensors, Nginx log analysis, Fail2ban, and trusted external feeds — and detects phishing and malicious domains in real time via Certificate Transparency log monitoring — delivering actionable blocklists, STIX 2.1 bundles, TAXII 2.1 endpoints, and REST API outputs.
 
 🌐 **Live Platform:** [https://siberkapan.org](https://siberkapan.org)
 📡 **API Status:** [https://siberkapan.org/api/v1/status](https://siberkapan.org/api/v1/status)
@@ -36,8 +38,10 @@ SiberKapan is a community-driven threat intelligence platform focused on cyber t
 ## Features
 
 - **FortiGate Automation Stitch Integration** — Real-time attacker IP submission via webhook from FortiGate Security Fabric
+- **Phishing & Malicious Domain Detection** — Real-time Certificate Transparency (CT) log monitoring catches phishing domains at certificate-issuance time, often before any complaint is ever filed. Combines brand/intent keyword matching, fuzzy typosquat detection, and Punycode/IDN decoding. See [Detection Methodology →](docs/PHISHING_DETECTION.md)
 - **HoneypotKapan** — Open-source honeypot emulating 11 services (SSH, RDP, FTP, Telnet, SMB, MySQL, MSSQL, VNC, HTTP, SIP, SMTP); one-command install
 - **Malware Sample Capture** — SSH honeypot safely fingerprints malware attackers attempt to download (SHA256, SSRF-protected, never written to disk or executed), enriched via MalwareBazaar — see [siberkapan.org/malware-samples](https://siberkapan.org/malware-samples)
+- **Domain Liveness Tiering** — Own-source and USOM-sourced domains are continuously re-verified via tiered DNS/HTTP sweeps, distinguishing genuinely active threats from long-dead entries official lists never prune
 - **Sigma Rule Export** — SIEM-agnostic detection rules (`/api/v1/export/sigma`) for Splunk, Elastic, Sentinel, QRadar via pySigma
 - **Nginx Watcher** — Zero-dependency Python agent detecting 404/auth/rate floods and exploit signatures from nginx access logs
 - **Fail2ban Integration** — Automated ban event reporting
@@ -46,7 +50,7 @@ SiberKapan is a community-driven threat intelligence platform focused on cyber t
 - **Delta / Incremental Feed** — `?since=` parameter and ETag support to minimize bandwidth
 - **ASN Abuse Notification** — Automatic weekly abuse reports to network operators (Shadowserver model)
 - **AbuseIPDB / OTX / Spamhaus Reporting** — Active contributor to global threat databases
-- **IP Aging & Decay** — Automatic score decay and delisting for inactive IPs
+- **IP & Domain Aging** — Automatic score decay and delisting for inactive IPs; dead domains age out of active monitoring
 - **Community Blocklists** — TXT, JSON, CIDR, FortiGate CLI, iptables, Suricata rules, Wazuh CDB formats
 - **CVE Feed** — 1,600+ CISA KEV records with vendor-filtered RSS
 - **BGP / IP Lookup** — ASN, GeoIP, threat score, source attribution
@@ -63,15 +67,17 @@ SiberKapan is a community-driven threat intelligence platform focused on cyber t
 ┌──────────────────────────────────────────────────────────────────┐
 │                          Data Sources                             │
 │  FortiGate Webhooks │ HoneypotKapan │ Nginx Watcher │ Fail2ban   │
-│  Feodo │ URLhaus │ Emerging Threats │ CISA KEV                   │
+│  CT Log Monitor (Phishing) │ Feodo │ URLhaus │ ET │ CISA KEV     │
+│  USOM Domain Feed                                                 │
 └──────────────────────────┬───────────────────────────────────────┘
                            │
                 ┌──────────▼──────────┐
                 │   SiberKapan Core   │
-                │   Flask / SQLite    │
-                │   APScheduler       │
-                │   GeoIP Enrichment  │
-                │   IP Decay Engine   │
+                │  Detection Engine   │
+                │  GeoIP Enrichment   │
+                │  IP Decay Engine    │
+                │  Domain Liveness    │
+                │  Tiering Engine     │
                 └──────────┬──────────┘
                            │
       ┌────────────────────┼────────────────────┐
@@ -131,6 +137,30 @@ Contact via [siberkapan.org/iletisim](https://siberkapan.org/iletisim)
 |-------|-----------------|---------|
 | [HoneypotKapan](honeypot/) | SSH, RDP, FTP, Telnet, SMB, MySQL, MSSQL, VNC, HTTP, SIP, SMTP | `wget https://siberkapan.org/honeypot/install.py && sudo python3 install.py` |
 | [Nginx Watcher](nginx-watcher/) | 404/auth/rate flood, exploit path signatures, scanner UAs | `curl -fsSL https://siberkapan.org/nginx-watcher/install.sh \| sudo bash -s -- --key=YOUR_KEY` |
+
+---
+
+## Phishing & Malicious Domain Detection
+
+SiberKapan runs a dedicated real-time engine that catches phishing and malicious domains — often before official lists like USOM ever hear about them. It combines:
+
+- **Certificate Transparency log monitoring** — every new TLS certificate is observed the moment it's issued
+- **Brand & intent keyword matching** — boundary-aware detection of impersonated institutions and common lure language
+- **Fuzzy typosquat detection** — catches near-miss brand spellings
+- **Punycode/IDN decoding** and **cloud-infrastructure filtering** to cut noise
+- **Tiered DNS/HTTP liveness verification** to keep the feed free of stale, long-dead domains
+
+Full write-up of the detection pipeline: **[docs/PHISHING_DETECTION.md](docs/PHISHING_DETECTION.md)**
+
+Want to help expand the keyword/pattern library? See **[docs/CONTRIBUTING_PATTERNS.md](docs/CONTRIBUTING_PATTERNS.md)**.
+
+### Domain Feed Endpoints
+
+| Endpoint | Description |
+|----------|-------------|
+| `/domains/txt` \| `/domains/json` | Combined domain feed (USOM + own-source), filterable by `source`/`type`/`min_criticality` |
+| `/domains/siberkapan/txt` \| `/domains/siberkapan/json` | Own-source detections only (CT-log + honeypot-derived) |
+| `/domains/usom-live/txt` \| `/domains/usom-live/json` | USOM's list filtered to domains SiberKapan has confirmed are still DNS-active |
 
 ---
 
@@ -256,6 +286,8 @@ Scores are cumulative (max 100). IPs decay at -2 points/day after 30 days of ina
 | HoneypotKapan Sensors | Community | Real-time |
 | Nginx Watcher Agents | Community | Real-time |
 | Fail2ban Reports | Community | Real-time |
+| Certificate Transparency Logs (Phishing) | Own-source | Real-time |
+| [USOM Domain List](https://siberguvenlik.gov.tr) | External | Hourly |
 | [Feodo Tracker](https://feodotracker.abuse.ch) | External | 6h |
 | [URLhaus](https://urlhaus.abuse.ch) | External | 6h |
 | [Emerging Threats](https://rules.emergingthreats.net) | External | 12h |
@@ -276,13 +308,13 @@ Threat scores are not permanent. An IP that was part of a botnet three months ag
 - **Daily decay:** After the grace period, the threat score decreases by 2 points per day
 - **Automatic delisting:** When a score drops below 15, the IP is removed from all feeds and blocklists — but the record is retained for audit purposes
 - **Natural reset:** Any new detection resets the decay counter, preventing premature delisting of persistent threats
-- **Implementation:** Decay runs as a bulk database operation rather than row-by-row updates, preventing lock contention in a concurrent multi-worker environment
+- **Implementation:** Decay runs as a bulk operation rather than row-by-row updates, preventing lock contention under concurrent load
 
 ### False Positive Prevention
 
 **Infrastructure allowlisting:** CDN and cloud proxy infrastructure (Cloudflare, Fastly, AWS CloudFront, Google) is automatically excluded from threat feeds. When a reverse proxy sits in front of a monitored web server, naive log analysis would flag the proxy's edge nodes as attackers. SiberKapan resolves this by cross-referencing detected IPs against official published CIDR ranges from each provider — updated every 24 hours. IPs identified as infrastructure are tagged and excluded from feeds, novel detection calculations, and AbuseIPDB reporting.
 
-**UDP spoofing protection:** UDP connections cannot be attributed to a verified source IP due to the connectionless nature of the protocol and the feasibility of source address spoofing. All UDP-only detections (UDP flood, UDP scan, session-based UDP anomalies) are retained in the internal database for traffic analysis but are explicitly excluded from:
+**UDP spoofing protection:** UDP connections cannot be attributed to a verified source IP due to the connectionless nature of the protocol and the feasibility of source address spoofing. All UDP-only detections (UDP flood, UDP scan, session-based UDP anomalies) are retained internally for traffic analysis but are explicitly excluded from:
 - All public feed endpoints
 - AbuseIPDB submissions
 - MISP feed events
@@ -291,6 +323,8 @@ Threat scores are not permanent. An IP that was part of a botnet three months ag
 This is consistent with AbuseIPDB's own reporting policy, which explicitly disallows UDP-based submissions due to the same spoofing concerns. The exclusion is enforced at the data pipeline level, not as a UI filter — meaning UDP-only IPs cannot reach any external reporting channel regardless of how the submission is triggered.
 
 **Novel detection methodology:** The platform's "novel detection" metric (percentage of IPs not previously known to AbuseIPDB) is calculated only against organically detected IPs — honeypot, FortiGate, Nginx Watcher, and Fail2ban sources. External feed aggregations (Feodo Tracker, URLhaus, Emerging Threats) are excluded from this calculation, as they consist of already-known global threats and would artificially deflate the metric.
+
+**Phishing detection safeguards:** Domain detections whose entire signal is fuzzy-derived (no exact brand or intent match) are capped below the auto-approve threshold and routed to manual review, preventing coincidental substring collisions from reaching public feeds unsupervised. See [docs/PHISHING_DETECTION.md](docs/PHISHING_DETECTION.md) for details.
 
 ### Data Poisoning & Abuse Prevention
 
