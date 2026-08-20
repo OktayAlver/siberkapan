@@ -11,6 +11,8 @@
 [![TAXII](https://img.shields.io/badge/TAXII-2.1-orange.svg)](https://siberkapan.org/taxii/)
 [![CVE](https://img.shields.io/badge/CVE%20Records-1600%2B-red.svg)](https://siberkapan.org/rss/cve)
 
+> **🏅 Official MISP Default Feed:** SiberKapan's threat intelligence feed has been officially merged into the global default feed list of MISP (Malware Information Sharing Platform) — the industry-standard open source threat intelligence platform used by CERTs, SOCs, and government cybersecurity teams worldwide.
+
 SiberKapan is a community-driven threat intelligence platform focused on cyber threats targeting Turkish infrastructure. It aggregates threat data from FortiGate community webhooks, honeypot sensors, Nginx log analysis, Fail2ban, and trusted external feeds — and detects phishing and malicious domains in real time via Certificate Transparency log monitoring — delivering actionable blocklists, STIX 2.1 bundles, TAXII 2.1 endpoints, and REST API outputs.
 
 🌐 **Live Platform:** [https://siberkapan.org](https://siberkapan.org)
@@ -63,33 +65,19 @@ SiberKapan is a community-driven threat intelligence platform focused on cyber t
 
 ## Architecture
 
-```
-┌──────────────────────────────────────────────────────────────────┐
-│                          Data Sources                             │
-│  FortiGate Webhooks │ HoneypotKapan │ Nginx Watcher │ Fail2ban   │
-│  CT Log Monitor (Phishing) │ Feodo │ URLhaus │ ET │ CISA KEV     │
-│  USOM Domain Feed                                                 │
-└──────────────────────────┬───────────────────────────────────────┘
-                           │
-                ┌──────────▼──────────┐
-                │   SiberKapan Core   │
-                │  Detection Engine   │
-                │  GeoIP Enrichment   │
-                │  IP Decay Engine    │
-                │  Domain Liveness    │
-                │  Tiering Engine     │
-                └──────────┬──────────┘
-                           │
-      ┌────────────────────┼────────────────────┐
-      │                    │                    │
- ┌────▼────┐         ┌─────▼────┐        ┌─────▼──────┐
- │REST API │         │ TAXII    │        │  Reporting  │
- │STIX 2.1 │         │ 2.1      │        │  AbuseIPDB  │
- │Delta    │         │ MISP     │        │  OTX        │
- │Suricata │         │ Feed     │        │  Spamhaus   │
- │Wazuh    │         │          │        │  ASN Notify │
- │Sigma    │         │          │        │             │
- └─────────┘         └──────────┘        └────────────┘
+```mermaid
+graph TD
+    A[FortiGate Webhooks] --> E[SiberKapan Core]
+    B[HoneypotKapan Sensors] --> E
+    C[Nginx Watcher / Fail2ban] --> E
+    D[CT Log Monitor - Phishing] --> E
+    F[External Feeds: Feodo, URLhaus, ET, CISA KEV, USOM] --> E
+
+    E --> G[Detection Engine<br/>GeoIP · Decay · Domain Liveness]
+
+    G --> H[REST API<br/>STIX 2.1 · Delta · Suricata · Wazuh · Sigma]
+    G --> I[TAXII 2.1 / MISP Feed]
+    G --> J[Reporting<br/>AbuseIPDB · OTX · Spamhaus · ASN Notify]
 ```
 
 ---
