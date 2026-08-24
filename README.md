@@ -10,6 +10,7 @@
 [![MISP](https://img.shields.io/badge/MISP-Official%20Feed-blueviolet.svg)](https://siberkapan.org/misp-feed/manifest.json)
 [![TAXII](https://img.shields.io/badge/TAXII-2.1-orange.svg)](https://siberkapan.org/taxii/)
 [![CVE](https://img.shields.io/badge/CVE%20Records-1600%2B-red.svg)](https://siberkapan.org/rss/cve)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22086120.svg)](https://doi.org/10.5281/zenodo.22086120)
 
 > **🏅 Official MISP Default Feed:** SiberKapan's threat intelligence feed has been officially merged into the global default feed list of MISP (Malware Information Sharing Platform) — the industry-standard open source threat intelligence platform used by CERTs, SOCs, and government cybersecurity teams worldwide.
 
