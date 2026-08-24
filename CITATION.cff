@@ -1,0 +1,17 @@
+cff-version: 1.2.0
+message: "If you use this software or its data, please cite it using the metadata below."
+title: "SiberKapan: Open-Source Threat Intelligence Platform for Turkish Infrastructure"
+authors:
+  - family-names: "Alver"
+    given-names: "Oktay"
+repository-code: "https://github.com/OktayAlver/siberkapan"
+url: "https://siberkapan.org"
+abstract: "SiberKapan is an open-source threat intelligence platform that collects, validates, and shares indicators of compromise from a self-operated honeypot network, FortiGate integrations, and nginx log monitoring, with a focus on threats targeting Turkish infrastructure. SiberKapan is an official MISP default feed provider."
+keywords:
+  - threat intelligence
+  - cyber threat intelligence
+  - honeypot
+  - MISP
+  - cybersecurity
+  - Turkey
+license: MIT
