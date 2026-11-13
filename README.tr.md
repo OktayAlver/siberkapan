@@ -14,7 +14,7 @@
 
 > **Resmi MISP Varsayılan Beslemesi:** SiberKapan'ın tehdit istihbaratı beslemesi, dünya genelinde CERT'lerin, SOC'ların ve kamu siber güvenlik ekiplerinin kullandığı açık kaynak tehdit istihbaratı platformu MISP'in (Malware Information Sharing Platform) varsayılan besleme listesine resmi olarak eklenmiştir.
 
-SiberKapan, Türkiye altyapısını hedefleyen siber tehditlere odaklanan bir tehdit istihbaratı platformudur. Tehdit verisini kendi sensör ağından toplar. Bu ağ FortiGate webhook'ları, honeypot sensörleri, Nginx log analizi ve Fail2ban kayıtlarından oluşur, güvenilir dış beslemelerle desteklenir. Certificate Transparency log izlemesiyle oltalama ve zararlı alan adlarını gerçek zamanlı tespit eder. Sonuçları kullanıma hazır engelleme listeleri, STIX 2.1 paketleri, TAXII 2.1 uç noktaları ve REST API olarak yayınlar.
+SiberKapan, Türkiye altyapısını hedefleyen siber tehditlere odaklanan bir tehdit istihbaratı platformudur. Tehdit verisini kendi sensör ağından toplar. Bu ağ FortiGate webhook'ları, honeypot sensörleri, Nginx log analizi ve Fail2ban kayıtlarından oluşur, güvenilir dış beslemelerle desteklenir. Certificate Transparency log izlemesiyle oltalama ve zararlı alan adlarını gerçek zamanlı tespit eder. Fidye yazılımı sızıntı sitelerini, Telegram kanallarını ve dark web forumlarını Türkiye ile ilgili etkinlik için izler. Sonuçları kullanıma hazır engelleme listeleri, STIX 2.1 paketleri, TAXII 2.1 uç noktaları, REST API ve yapay zekâ asistanları için bir MCP sunucusu olarak yayınlar.
 
 **Canlı Platform:** [https://siberkapan.org](https://siberkapan.org)
 **API Durumu:** [https://siberkapan.org/api/v1/status](https://siberkapan.org/api/v1/status)
@@ -28,10 +28,16 @@ SiberKapan, Türkiye altyapısını hedefleyen siber tehditlere odaklanan bir te
 
 | Platform | Durum | Ayrıntı |
 |----------|-------|---------|
-| **MISP** | Resmi besleme | Besleme PR'ı kabul edildi, [manifest](https://siberkapan.org/misp-feed/manifest.json) |
+| **MISP** | Resmi varsayılan besleme | Besleme PR'ı kabul edildi, [manifest](https://siberkapan.org/misp-feed/manifest.json) |
+| **MISP Modules** | Genişletme modülü kabul edildi | SiberKapan IP sorgu modülü, [MISP/misp-modules #1095](https://github.com/MISP/misp-modules/pull/1095) |
+| **GCVE KEV Dizini** | Listede | SiberKapan KEV kataloğu, [gcve-eu/gcve.eu-directory #3](https://github.com/gcve-eu/gcve.eu-directory/pull/3) |
+| **Vulnerability-Lookup** | Sighting katkıcısı | Günlük zafiyet sighting bildirimi |
 | **AbuseIPDB** | Webmaster ve Contributor | Aktif IP bildirimi |
 | **AlienVault OTX** | Pulse yayıncısı | Günlük IOC pulse'ları |
 | **Spamhaus** | Bildirim ortağı | Aktif IP bildirimi |
+| **abuse.ch URLhaus** | Bildirimci | Zararlı URL bildirimi |
+| **Netcraft** | Bildirimci | Otomatik oltalama bildirimi |
+| **Zenodo** | DOI | [10.5281/zenodo.22086120](https://doi.org/10.5281/zenodo.22086120) |
 | **TAXII 2.1** | Canlı | [https://siberkapan.org/taxii/](https://siberkapan.org/taxii/) |
 | **Suricata IDS** | Dışa aktarım | `/api/v1/export/suricata` |
 | **Wazuh SIEM** | Dışa aktarım | `/api/v1/export/wazuh-cdb` |
@@ -41,27 +47,59 @@ SiberKapan, Türkiye altyapısını hedefleyen siber tehditlere odaklanan bir te
 
 ## Özellikler
 
+### Toplama ve tespit
+
 - **FortiGate Automation Stitch Entegrasyonu.** FortiGate Security Fabric'ten webhook ile gerçek zamanlı saldırgan IP bildirimi.
 - **Oltalama ve Zararlı Alan Adı Tespiti.** Gerçek zamanlı Certificate Transparency (CT) log izlemesi, oltalama alan adlarını sertifika verildiği anda, çoğu zaman henüz hiçbir şikâyet yapılmadan yakalar. Marka ve niyet anahtar kelimesi eşleştirmesi, bulanık typosquat tespiti ve Punycode/IDN çözümlemesini birleştirir. Bkz. [Tespit Metodolojisi](docs/PHISHING_DETECTION.md)
 - **HoneypotKapan.** 11 servisi (SSH, RDP, FTP, Telnet, SMB, MySQL, MSSQL, VNC, HTTP, SIP, SMTP) taklit eden açık kaynak honeypot, tek komutla kurulur.
 - **Zararlı Yazılım Örneği Yakalama.** SSH honeypot'u, saldırganların indirmeye çalıştığı zararlı yazılımların parmak izini güvenli şekilde alır (SHA256, SSRF korumalı, diske yazılmaz ve çalıştırılmaz). MalwareBazaar ile zenginleştirilir. Bkz. [siberkapan.org/malware-samples](https://siberkapan.org/malware-samples)
-- **Alan Adı Canlılık Katmanları.** Kendi kaynağımızdan ve USOM'dan gelen alan adları katmanlı DNS/HTTP taramalarıyla sürekli yeniden doğrulanır. Böylece gerçekten aktif tehditler, resmi listelerin hiç temizlemediği ölü kayıtlardan ayrılır.
-- **Sigma Kuralı Dışa Aktarımı.** pySigma ile Splunk, Elastic, Sentinel ve QRadar için SIEM'den bağımsız tespit kuralları (`/api/v1/export/sigma`).
 - **Nginx Watcher.** Nginx erişim loglarından 404, kimlik doğrulama ve istek selleri ile istismar imzalarını tespit eden, bağımlılığı olmayan Python ajanı.
 - **Fail2ban Entegrasyonu.** Engelleme olaylarının otomatik bildirimi.
+- **Alan Adı Canlılık Katmanları.** Kendi kaynağımızdan ve USOM'dan gelen alan adları katmanlı DNS/HTTP taramalarıyla sürekli yeniden doğrulanır. Böylece gerçekten aktif tehditler, resmi listelerin hiç temizlemediği ölü kayıtlardan ayrılır.
+
+### Analiz
+
+- **Gürültü Skoru.** Her IP için geniş çaplı internet taraması gürültüsünü daha hedefli etkinlikten ayırmaya yardım eder.
+- **IP Zaman Çizelgesi, Saldırı Zinciri ve Risk Faktörleri.** IP ayrıntı sayfası etkinlik zaman çizelgesini, saldırı zinciri kartını ve skoru oluşturan etkenleri gösterir.
+- **Davranış Etiketleri (MITRE ATT&CK).** Tespitler davranışa göre etiketlenir ve MITRE ATT&CK ile eşlenir, eğilim görünümleriyle birlikte. Bkz. [/etiketler](https://siberkapan.org/etiketler)
+- **Saldırı Sıklığı.** Zaman içinde saldırı hacmi ve sıklığı. Bkz. [/saldiri-sikligi](https://siberkapan.org/saldiri-sikligi)
+- **Türkiye Tehdit Haritası.** Türkiye'deki saldırı kaynaklarının ağ (ASN) bazında görünümü. Bkz. [/tr-tehdit-haritasi](https://siberkapan.org/tr-tehdit-haritasi)
+- **En Çok Denenen Şifreler.** Honeypot'lara karşı en çok denenen şifrelerin haftalık listesi. Bkz. [/en-cok-denenen-sifreler](https://siberkapan.org/en-cok-denenen-sifreler)
+- **Birleşik Arama.** Platformdaki veriler üzerinde tek arama kutusu. Bkz. [/ara](https://siberkapan.org/ara)
+
+### Zafiyet istihbaratı
+
+- **KEV Kataloğu.** SiberKapan'ın kendi istismar edilen zafiyetler kataloğu (`kev.json`, CC BY 4.0). GCVE BCP-07 biçiminde de yayınlanır ve GCVE KEV dizininde listelenir. Bkz. [/kev-katalogu](https://siberkapan.org/kev-katalogu)
+- **Vulnerability-Lookup Sighting'leri.** Vulnerability-Lookup'a günlük sighting bildirimi.
+- **CVE Beslemesi.** Üreticiye göre filtrelenebilen RSS ile 1.600'den fazla CISA KEV kaydı.
+
+### İzleme
+
+- **Fidye Yazılımı Türkiye.** Fidye yazılımı sızıntı sitelerindeki Türkiye ile ilgili kurbanlar, ransomware.live verisine dayanır. Bkz. [/fidye-yazilimi-turkiye](https://siberkapan.org/fidye-yazilimi-turkiye)
+- **Telegram İzleme.** Tehditle ilgili yaklaşık 400 Telegram kanalı (deepdarkCTI listesinden) Tor üzerinden izlenir.
+- **Dark Web Forum İzleme.** Seçili forumlardan yalnızca gönderi başlıkları ve bağlantıları Tor üzerinden toplanır. Gönderi içeriği ve dosyalar indirilmez.
+- **Marka İzleme.** İzlenen bir marka için CT loglarında benzer görünümlü alan adı çıktığında uyarı verir. Bkz. [/marka-izleme](https://siberkapan.org/marka-izleme)
+- **Ağımı İzle.** Alan adı sahipleri, alan adları Telegram kanallarında, tehdit alan adı beslemelerinde, forum başlıklarında veya XposedOrNot sızıntı verisinde görüldüğünde uyarı alır. Bkz. [/agimi-izle](https://siberkapan.org/agimi-izle)
+- **Sızıntı Kontrol.** Yetkili OSINT kaynaklarından alan adı düzeyinde maruziyet raporu. Rapor yalnızca sorgulanan alan adındaki bir e-posta adresine gönderilir. Bkz. [/sizinti-kontrol](https://siberkapan.org/sizinti-kontrol)
+- **Günlük İstihbarat Özeti.** Günlük özet e-postası.
+
+### Paylaşım ve entegrasyon
+
 - **Resmi MISP Beslemesi.** MISP ekosistemine kabul edilmiş, STIX uyumlu JSON besleme.
+- **MISP Genişletme Modülü.** SiberKapan IP sorgusu, MISP/misp-modules'e kabul edildi.
+- **MCP Sunucusu.** Yapay zekâ asistanlarının SiberKapan'ı doğrudan sorgulamasını sağlar. Bkz. [/yapay-zeka-entegrasyonu](https://siberkapan.org/yapay-zeka-entegrasyonu)
 - **TAXII 2.1 Sunucusu.** Kurumsal SIEM/SOAR entegrasyonu için standart protokol (Anomali, ThreatConnect, CERT platformları).
 - **Delta / Artımlı Besleme.** Bant genişliğini azaltmak için `?since=` parametresi ve ETag desteği.
-- **ASN Kötüye Kullanım Bildirimi.** Ağ operatörlerine haftalık otomatik kötüye kullanım raporları (Shadowserver modeli).
-- **AbuseIPDB / OTX / Spamhaus Bildirimi.** Küresel tehdit veritabanlarına aktif katkı.
-- **IP ve Alan Adı Yaşlandırma.** Etkinliği biten IP'ler için otomatik skor düşüşü ve listeden çıkarma. Ölü alan adları aktif izlemeden düşer.
-- **Engelleme Listeleri.** TXT, JSON, CIDR, FortiGate CLI, iptables, Suricata kuralları ve Wazuh CDB biçimleri.
-- **CVE Beslemesi.** Üreticiye göre filtrelenebilen RSS ile 1.600'den fazla CISA KEV kaydı.
-- **BGP / IP Sorgulama.** ASN, GeoIP, tehdit skoru ve kaynak bilgisi.
+- **Engelleme Listeleri.** TXT, JSON, CIDR, /24 ağ bloğu, FortiGate CLI, iptables, Suricata kuralları ve Wazuh CDB biçimleri.
+- **Sigma Kuralı Dışa Aktarımı.** pySigma ile Splunk, Elastic, Sentinel ve QRadar için SIEM'den bağımsız tespit kuralları (`/api/v1/export/sigma`).
 - **STIX 2.1 Çıktısı.** Makinenin okuyabileceği tehdit istihbaratı paketi.
+- **BGP / IP Sorgulama.** ASN, GeoIP, tehdit skoru ve kaynak bilgisi.
+- **ASN Kötüye Kullanım Bildirimi.** Ağ operatörlerine haftalık otomatik kötüye kullanım raporları (Shadowserver modeli).
+- **AbuseIPDB / OTX / Spamhaus / URLhaus / Netcraft Bildirimi.** Küresel tehdit veritabanlarına aktif katkı.
+- **IP ve Alan Adı Yaşlandırma.** Etkinliği biten IP'ler için otomatik skor düşüşü ve listeden çıkarma. Ölü alan adları aktif izlemeden düşer.
 - **Listeden Çıkarma.** Cloudflare Turnstile korumalı yanlış pozitif bildirimi.
 - **Türkçe/İngilizce.** Tamamen iki dilli arayüz.
-- **Tehdit Raporları.** Yeni tespit analizini içeren dönemsel tehdit istihbaratı raporları.
+- **Tehdit Raporları.** Aylık otomatik Türkiye sunucu saldırı raporları ve dönemsel kapsamlı raporlar.
 
 ---
 
@@ -72,14 +110,16 @@ graph TD
     A[FortiGate Webhook'ları] --> E[SiberKapan Çekirdek]
     B[HoneypotKapan Sensörleri] --> E
     C[Nginx Watcher / Fail2ban] --> E
-    D[CT Log İzleme - Oltalama] --> E
+    D[CT Log İzleme - Oltalama ve Marka İzleme] --> E
+    K[Telegram / Dark Web Forumları / ransomware.live] --> E
     F[Dış Beslemeler: Feodo, URLhaus, ET, CISA KEV, USOM] --> E
 
-    E --> G[Tespit Motoru<br/>GeoIP · Skor Düşüşü · Alan Adı Canlılığı]
+    E --> G[Tespit Motoru<br/>GeoIP · Skor Düşüşü · Gürültü Skoru · MITRE Etiketleri · Alan Adı Canlılığı]
 
     G --> H[REST API<br/>STIX 2.1 · Delta · Suricata · Wazuh · Sigma]
-    G --> I[TAXII 2.1 / MISP Beslemesi]
-    G --> J[Bildirim<br/>AbuseIPDB · OTX · Spamhaus · ASN]
+    G --> I[TAXII 2.1 / MISP Beslemesi / MISP Modülü]
+    G --> L[MCP Sunucusu / KEV Kataloğu]
+    G --> J[Bildirim<br/>AbuseIPDB · OTX · Spamhaus · URLhaus · Netcraft · ASN]
 ```
 
 ---
@@ -238,6 +278,10 @@ https://siberkapan.org/misp-feed/manifest.json
 
 MISP'e ekleme: Administration → Feeds → Add Feed → URL: `https://siberkapan.org/misp-feed/`
 
+### MISP Genişletme Modülü
+
+SiberKapan modülü [MISP/misp-modules](https://github.com/MISP/misp-modules) içinde yer alır. Administration → Server Settings → Plugin → Enrichment altından etkinleştirip IP özniteliklerini SiberKapan'a sorgulatabilirsiniz.
+
 ### CVE / Tehdit İstihbaratı
 
 | Uç nokta | Açıklama |
@@ -276,12 +320,16 @@ Skorlar birikimlidir (en fazla 100). 30 gün etkinlik olmadığında IP'lerin sk
 | HoneypotKapan sensörleri | Kendi sensörü | Gerçek zamanlı |
 | Nginx Watcher ajanları | Kendi sensörü | Gerçek zamanlı |
 | Fail2ban bildirimleri | Kendi sensörü | Gerçek zamanlı |
-| Certificate Transparency logları (oltalama) | Kendi kaynağı | Gerçek zamanlı |
+| Certificate Transparency logları (oltalama, marka izleme) | Kendi kaynağı | Gerçek zamanlı |
+| Telegram kanalları (deepdarkCTI listesi, Tor üzerinden) | İzleme | Zamanlanmış |
+| Dark web forum başlıkları (Tor üzerinden) | İzleme | Zamanlanmış |
+| [ransomware.live](https://www.ransomware.live) | Fidye yazılımı | Zamanlanmış |
 | [USOM alan adı listesi](https://siberguvenlik.gov.tr) | Dış | Saatlik |
 | [Feodo Tracker](https://feodotracker.abuse.ch) | Dış | 6 saat |
 | [URLhaus](https://urlhaus.abuse.ch) | Dış | 6 saat |
 | [Emerging Threats](https://rules.emergingthreats.net) | Dış | 12 saat |
 | [CISA KEV](https://www.cisa.gov/known-exploited-vulnerabilities-catalog) | CVE | Günlük |
+| [MISP warninglists](https://github.com/MISP/misp-warninglists) | Yanlış pozitif filtresi | Günlük |
 | [RIPE NCC](https://stat.ripe.net) | Ülke önekleri | İsteğe bağlı |
 
 ---
@@ -303,6 +351,8 @@ Tehdit skorları kalıcı değildir. Üç ay önce bir botnet'in parçası olan 
 ### Yanlış Pozitiflerin Önlenmesi
 
 **Altyapı istisna listesi.** CDN ve bulut proxy altyapısı (Cloudflare, Fastly, AWS CloudFront, Google) tehdit beslemelerinden otomatik olarak çıkarılır. İzlenen bir web sunucusunun önünde ters proxy varsa, basit bir log analizi proxy'nin uç düğümlerini saldırgan olarak işaretler. SiberKapan, tespit edilen IP'leri her sağlayıcının yayınladığı resmi CIDR aralıklarıyla karşılaştırarak bunu çözer. Aralıklar 24 saatte bir güncellenir. Altyapı olarak tanımlanan IP'ler etiketlenir ve beslemelerden, yeni tespit hesabından ve AbuseIPDB bildirimlerinden çıkarılır.
+
+**MISP warninglists.** Seçili [MISP warninglists](https://github.com/MISP/misp-warninglists) listeleri (bilinen tarayıcılar ve crawler'lar, ayrılmış adres aralıkları, banka siteleri ve benzerleri) hem IP hem alan adı tespitlerine her gün uygulanır. Eşleşen kayıtlar beslemelerden çekilir.
 
 **UDP sahteciliğine karşı koruma.** Protokolün bağlantısız yapısı ve kaynak adres sahteciliğinin mümkün olması nedeniyle UDP bağlantıları doğrulanmış bir kaynak IP'ye bağlanamaz. Yalnızca UDP'ye dayanan tespitler (UDP seli, UDP taraması, oturum tabanlı UDP anomalileri) trafik analizi için içeride saklanır, ancak şunlardan açıkça hariç tutulur:
 - Tüm herkese açık besleme uç noktaları
@@ -335,17 +385,23 @@ SiberKapan'ın SSH honeypot'u, saldırganların indirmeye çalıştığı zararl
 - **Sınırlı indirme.** 5 MB boyut sınırı, 8 saniye zaman aşımı ve en fazla 3 yönlendirme (her biri ayrıca doğrulanır).
 - **Saklama değil zenginleştirme.** Yakalanan özetler bilinen zararlı yazılım ailelerini belirlemek için [MalwareBazaar](https://bazaar.abuse.ch) ile karşılaştırılır. SiberKapan dosyanın kendisini hiçbir zaman barındırmaz.
 
+### İzleme Sınırları
+
+- **Dark web forumları.** Yalnızca gönderi başlıkları ve bağlantıları toplanır. Gönderi içeriği, ekler ve sızdırılmış dosyalar indirilmez.
+- **Sızıntı Kontrol.** Yetkili OSINT kaynaklarını kullanır ve düz metin şifre içermez. Raporlar yalnızca sorgulanan alan adındaki bir adrese e-postayla gönderilir, böylece yalnızca alan adı sahibi görür.
+
 ---
 
-- **Standartlar:** STIX 2.1, TAXII 2.1, RSS/Atom, REST
-- **Entegrasyonlar:** MISP, AbuseIPDB, AlienVault OTX, Spamhaus, Suricata, Wazuh
+- **Standartlar:** STIX 2.1, TAXII 2.1, RSS/Atom, REST, MCP
+- **Entegrasyonlar:** MISP, MISP Modules, AbuseIPDB, AlienVault OTX, Spamhaus, URLhaus, Netcraft, Vulnerability-Lookup, Suricata, Wazuh
 
 ---
 
 ## Tehdit Raporları
 
-Tespit eğilimlerini, yeni tehdit keşif oranlarını ve saldırı örüntülerini analiz eden dönemsel tehdit istihbaratı raporları.
+Aylık otomatik Türkiye sunucu saldırı raporları ile tespit eğilimlerini, yeni tehdit keşif oranlarını ve saldırı örüntülerini analiz eden dönemsel kapsamlı raporlar.
 
+- Tüm raporlar: [siberkapan.org/tehdit-raporlari](https://siberkapan.org/tehdit-raporlari)
 - [Sayı 1, Haziran-Temmuz 2026](https://siberkapan.org/tehdit-raporlari/sayi-1) | [EN PDF](https://siberkapan.org/static/reports/siberkapan-tehdit-raporu-sayi1-en.pdf) | [TR PDF](https://siberkapan.org/static/reports/siberkapan-tehdit-raporu-sayi1-tr.pdf)
 
 ---
