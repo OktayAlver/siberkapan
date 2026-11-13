@@ -21,6 +21,7 @@ SiberKapan is a community-driven threat intelligence platform focused on cyber t
 📄 **Methodology:** [https://siberkapan.org/metodoloji](https://siberkapan.org/metodoloji)
 📊 **Threat Reports:** [https://siberkapan.org/tehdit-raporlari](https://siberkapan.org/tehdit-raporlari)
 
+🏢 **Developed and operated by:** [ADEA Sistem Bilgi Teknolojileri](https://www.adeasis.com/), Istanbul
 ---
 
 ## Recognition & Ecosystem Integration
@@ -369,3 +370,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 - **Platform:** [siberkapan.org](https://siberkapan.org)
 - **Contact Form:** [siberkapan.org/iletisim](https://siberkapan.org/iletisim)
 - **Developer:** [Oktay ALVER](https://www.linkedin.com/in/oktayalver/)
+- - **Company:** [ADEA Sistem Bilgi Teknolojileri](https://www.adeasis.com/)
